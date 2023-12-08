@@ -16,6 +16,8 @@ pub trait Device<T: Type>: Clone {
 
     fn mul_scalar(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;
 
+    fn eq(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> bool;
+
     fn sum(
         &self,
         lhs: &NDArray<T, Self>,

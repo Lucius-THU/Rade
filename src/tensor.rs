@@ -5,7 +5,8 @@ use crate::operation::{
 };
 use crate::type_trait::{Len, Type};
 use lazy_static::lazy_static;
-use std::ops::{Add, Mul};
+use num_traits::{One, Zero};
+use std::ops::{Add, Mul, Neg, Sub};
 use std::sync::{Arc, RwLock};
 
 lazy_static! {
@@ -78,7 +79,7 @@ impl<'a, T: Type, D: Device<T>> Tensor<'a, T, D> {
     }
 
     pub fn detach(&self) -> Self {
-        Self::make(self.0.read().unwrap().cached_data.clone(), &[], None, false)
+        Self::make(Some(self.realize_cached_data()), &[], None, false)
     }
 
     pub fn shape(&self) -> Vec<usize> {
@@ -164,6 +165,36 @@ impl<'a, T: Type + 'a, D: Device<T>> Mul<T> for &Tensor<'a, T, D> {
     }
 }
 
+impl<'a, T: Type, D: Device<T>> Sub for &Tensor<'a, T, D> {
+    type Output = Tensor<'a, T, D>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Tensor::calc(EWiseAdd, &[self, &(rhs * (T::zero() - T::one()))])
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device<T>> Sub<T> for &Tensor<'a, T, D> {
+    type Output = Tensor<'a, T, D>;
+
+    fn sub(self, rhs: T) -> Self::Output {
+        Tensor::calc(AddScalar(T::zero() - rhs), &[self])
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device<T>> Neg for &Tensor<'a, T, D> {
+    type Output = Tensor<'a, T, D>;
+
+    fn neg(self) -> Self::Output {
+        Tensor::calc(MulScalar(T::zero() - T::one()), &[self])
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device<T>> PartialEq for Tensor<'a, T, D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.realize_cached_data() == other.realize_cached_data()
+    }
+}
+
 macro_rules! impl_add {
     ($($t:ty),*) => {
         $(
@@ -192,9 +223,25 @@ macro_rules! impl_mul {
     };
 }
 
-impl_add!(usize, u8, u16, u32, u64, isize, i8, i16, i32, i64, f32, f64);
+macro_rules! impl_sub {
+    ($($t:ty),*) => {
+        $(
+            impl<'a, D: Device<$t>> Sub<&Tensor<'a, $t, D>> for $t {
+                type Output = Tensor<'a, $t, D>;
 
-impl_mul!(usize, u8, u16, u32, u64, isize, i8, i16, i32, i64, f32, f64);
+                fn sub(self, rhs: &Tensor<'a, $t, D>) -> Self::Output {
+                    Tensor::calc(AddScalar(self), &[&(rhs * (<$t as Zero>::zero() - <$t as One>::one()))])
+                }
+            }
+        )*
+    };
+}
+
+impl_add!(isize, i8, i16, i32, i64, i128, f32, f64);
+
+impl_mul!(isize, i8, i16, i32, i64, i128, f32, f64);
+
+impl_sub!(isize, i8, i16, i32, i64, i128, f32, f64);
 
 #[cfg(test)]
 mod tests {
@@ -203,25 +250,18 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let a = Tensor::<f32, CPU>::rand(&[2, 3], 0.0, 1.0, true);
-        let b = Tensor::rand(&[3], 0.0, 1.0, true);
-        let c = &(&a + &b).realize_cached_data().0;
-        assert_eq!(c.shape, vec![2, 3]);
-        assert_eq!(c.strides, vec![3, 1]);
-
-        let d = &(&a + 1.0).realize_cached_data().0;
-        let e = &(1.0 + &b).realize_cached_data().0;
-        assert_eq!(d.shape, vec![2, 3]);
-        assert_eq!(d.strides, vec![3, 1]);
-        assert_eq!(e.shape, vec![3]);
-        assert_eq!(e.strides, vec![1]);
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        assert!(&a + &b == Tensor::new2d([[2.0, 4.0, 6.0], [5.0, 7.0, 9.0]], false));
+        assert!(&a + 1.0 == Tensor::new1d([2.0, 3.0, 4.0], false));
+        assert!(2.0 + &b == Tensor::new2d([[3.0, 4.0, 5.0], [6.0, 7.0, 8.0]], false));
     }
 
     #[test]
     fn test_new() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], true);
-        let b = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], true);
-        let c = Tensor::<f32, CPU>::new3d([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]], true);
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        let b = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        let c = Tensor::<f32, CPU>::new3d([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]], false);
         assert_eq!(a.shape(), &[3]);
         assert_eq!(b.shape(), &[2, 3]);
         assert_eq!(c.shape(), &[1, 3, 2]);
@@ -229,75 +269,48 @@ mod tests {
 
     #[test]
     fn test_broadcast() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], true);
-        let b = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], true);
-        let c = Tensor::<f32, CPU>::new3d([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]], true);
-        let d = Tensor::<f32, CPU>::ones(&[3], true);
-        let e = Tensor::<f32, CPU>::ones(&[2, 3], true);
-        let f = Tensor::<f32, CPU>::ones(&[1, 3, 1], true);
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        let b = Tensor::<f32, CPU>::new2d([[1.0], [4.0]], false);
         assert_eq!(a.broadcast(&[2, 3]).shape(), &[2, 3]);
         assert_eq!(b.broadcast(&[1, 2, 3]).shape(), &[1, 2, 3]);
-        assert_eq!(c.broadcast(&[2, 3, 2]).shape(), &[2, 3, 2]);
-        assert_eq!(d.broadcast(&[2, 3]).shape(), &[2, 3]);
-        assert_eq!(e.broadcast(&[1, 2, 3]).shape(), &[1, 2, 3]);
-        assert_eq!(f.broadcast(&[2, 3, 2]).shape(), &[2, 3, 2]);
     }
 
     #[test]
     fn test_mul() {
-        let a = Tensor::<f32, CPU>::rand(&[2, 3], 0.0, 1.0, true);
-        let b = Tensor::rand(&[3], 0.0, 1.0, true);
-        let c = &a * &b;
-        assert_eq!(c.shape(), vec![2, 3]);
-        assert_eq!(c.realize_cached_data().0.strides, vec![3, 1]);
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        assert!(&a * &b == Tensor::new2d([[1.0, 4.0, 9.0], [4.0, 10.0, 18.0]], false));
+        assert!(&a * 2.0 == Tensor::new1d([2.0, 4.0, 6.0], false));
+        assert!(3.0 * &b == Tensor::new2d([[3.0, 6.0, 9.0], [12.0, 15.0, 18.0]], false));
+    }
 
-        let d = &a * 2.0;
-        let e = 3.0 * &b;
-        assert_eq!(d.shape(), vec![2, 3]);
-        assert_eq!(e.shape(), vec![3]);
+    #[test]
+    fn test_sub() {
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        assert!(&a - &b == Tensor::new2d([[0.0, 0.0, 0.0], [-3.0, -3.0, -3.0]], false));
+        assert!(&a - 1.0 == Tensor::new1d([0.0, 1.0, 2.0], false));
+        assert!(2.0 - &b == Tensor::new2d([[1.0, 0.0, -1.0], [-2.0, -3.0, -4.0]], false));
     }
 
     #[test]
     fn test_sum() {
-        let a = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], true);
-        let ans0 = a.sum(None, false);
-        let ans1 = a.sum(Some(vec![0]), false);
-        let ans2 = a.sum(Some(vec![1]), false);
-        let ans3 = a.sum(Some(vec![0, 1]), true);
-        let ans4 = a.sum(Some(vec![0]), true);
-        let ans5 = a.sum(Some(vec![1]), true);
-
-        assert_eq!(ans0.shape(), &[1]);
-        assert_eq!(ans1.shape(), &[3]);
-        assert_eq!(ans2.shape(), &[2]);
-        assert_eq!(ans3.shape(), &[1, 1]);
-        assert_eq!(ans4.shape(), &[1, 3]);
-        assert_eq!(ans5.shape(), &[2, 1]);
+        let a = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        assert!(a.sum(None, false) == Tensor::new1d([21.0], false));
+        assert!(a.sum(Some(vec![0]), true) == Tensor::new2d([[5.0, 7.0, 9.0]], false));
+        assert!(a.sum(Some(vec![1]), false) == Tensor::new1d([6.0, 15.0], false));
+        assert!(a.sum(Some(vec![0, 1]), true) == Tensor::new2d([[21.0]], false));
     }
 
     #[test]
     fn test_reshape() {
-        let a = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], true);
-        let ans0 = a.reshape(vec![3, 2]);
-        let ans1 = a.reshape(vec![1, 6]);
-        let ans2 = a.reshape(vec![6, 1]);
-        let ans3 = a.reshape(vec![6]);
-        assert_eq!(ans0.shape(), &[3, 2]);
-        assert_eq!(ans1.shape(), &[1, 6]);
-        assert_eq!(ans2.shape(), &[6, 1]);
-        assert_eq!(ans3.shape(), &[6]);
+        let a = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        assert!(
+            a.reshape(vec![3, 2]) == Tensor::new2d([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], false)
+        );
+        assert!(a.reshape(vec![6]) == Tensor::new1d([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], false));
 
         let b = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], true).broadcast(&[2, 3]);
-        let ans4 = b.reshape(vec![3, 2]);
-        let ans5 = b.reshape(vec![1, 6]);
-        assert_eq!(ans4.shape(), &[3, 2]);
-        assert_eq!(ans5.shape(), &[1, 6]);
-
-        let ans6 = b.sum(Some(vec![0]), false);
-        let ans7 = b.sum(Some(vec![1]), false);
-        let ans8 = b.sum(Some(vec![0, 1]), true);
-        assert_eq!(ans6.shape(), &[3]);
-        assert_eq!(ans7.shape(), &[2]);
-        assert_eq!(ans8.shape(), &[1, 1]);
+        assert!(b.reshape(vec![3, 2]) == Tensor::new2d([[1.0, 2.0], [3.0, 1.0], [2.0, 3.0]], true));
     }
 }

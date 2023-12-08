@@ -107,6 +107,19 @@ impl<T: Type> Device<T> for CPU {
         NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
     }
 
+    fn eq(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> bool {
+        let mut idx = Idx::new(&lhs.0.shape);
+        loop {
+            if (lhs[&idx] - rhs[&idx]).abs() > T::atol() {
+                return false;
+            }
+            if !idx.next() {
+                break;
+            }
+        }
+        true
+    }
+
     fn sum(
         &self,
         lhs: &NDArray<T, Self>,

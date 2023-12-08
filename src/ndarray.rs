@@ -3,7 +3,6 @@ use crate::type_trait::Type;
 use std::ops::{Add, Mul};
 use std::sync::Arc;
 
-#[derive(Debug)]
 pub enum Storage<T> {
     CPU(Vec<T>),
     CUDA(*mut T),
@@ -153,6 +152,12 @@ impl<T: Type, D: Device<T>> Mul<T> for &NDArray<T, D> {
 
     fn mul(self, rhs: T) -> Self::Output {
         self.0.device.mul_scalar(self, rhs)
+    }
+}
+
+impl<T: Type, D: Device<T>> PartialEq for NDArray<T, D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.device.eq(self, other)
     }
 }
 

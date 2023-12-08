@@ -26,8 +26,6 @@ pub(crate) struct EWiseMul;
 
 pub(crate) struct MulScalar<T: Type>(pub T);
 
-pub(crate) struct EWisePow;
-
 impl<'a, T: Type + 'a, D: Device<T>> Operation<'a, T, D> for Broadcast {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].broadcast(&self.0)
@@ -149,34 +147,6 @@ impl<'a, T: Type + 'a, D: Device<T>> Operation<'a, T, D> for MulScalar<T> {
 
     fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
         vec![out_grad * self.0]
-    }
-}
-
-impl<'a, T: Type + 'a, D: Device<T>> Operation<'a, T, D> for EWisePow {
-    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
-        apply_with_broadcast(args, |lhs, rhs| lhs * rhs)
-    }
-
-    fn gradient(
-        &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
-        let grad_shape = out_grad.shape();
-        let mut in_grads = vec![];
-        let inputs = &node.0.write().unwrap().inputs;
-        for (i, input) in inputs.iter().enumerate() {
-            let shape = input.shape();
-            in_grads.push({
-                let in_grad = out_grad * &inputs[1 - i];
-                if shape == grad_shape {
-                    in_grad
-                } else {
-                    reduce_by_add(&in_grad, &shape)
-                }
-            });
-        }
-        in_grads
     }
 }
 
