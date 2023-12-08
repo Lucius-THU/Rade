@@ -1,5 +1,6 @@
 use crate::device::Device;
 use crate::type_trait::Type;
+use num_traits::{Float, Pow};
 use std::ops::{Add, Mul};
 use std::sync::Arc;
 
@@ -14,10 +15,10 @@ pub struct Idx {
 }
 
 #[derive(Clone)]
-pub struct NDArray<T: Type, D: Device<T>>(pub(crate) Arc<_NDArray<T, D>>);
+pub struct NDArray<T: Type, D: Device>(pub(crate) Arc<_NDArray<T, D>>);
 
 #[derive(Clone)]
-pub(crate) struct _NDArray<T: Type, D: Device<T>> {
+pub(crate) struct _NDArray<T: Type, D: Device> {
     pub data: Arc<Storage<T>>,
     pub shape: Vec<usize>,
     pub strides: Vec<usize>,
@@ -25,7 +26,7 @@ pub(crate) struct _NDArray<T: Type, D: Device<T>> {
     pub device: D,
 }
 
-impl<T: Type, D: Device<T>> NDArray<T, D> {
+impl<T: Type, D: Device> NDArray<T, D> {
     pub(crate) fn make(
         data: Storage<T>,
         shape: Vec<usize>,
@@ -123,7 +124,19 @@ impl<T: Type, D: Device<T>> NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device<T>> Add for &NDArray<T, D> {
+impl<T: Type + Float, D: Device> NDArray<T, D> {
+    pub fn ln(&self) -> Self {
+        self.0.device.ln(self)
+    }
+}
+
+impl<T: Type + Pow<T, Output = T>, D: Device> NDArray<T, D> {
+    pub fn scalar_pow(&self, rhs: T) -> Self {
+        self.0.device.scalar_pow(rhs, self)
+    }
+}
+
+impl<T: Type, D: Device> Add for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -131,7 +144,7 @@ impl<T: Type, D: Device<T>> Add for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device<T>> Add<T> for &NDArray<T, D> {
+impl<T: Type, D: Device> Add<T> for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn add(self, rhs: T) -> Self::Output {
@@ -139,7 +152,7 @@ impl<T: Type, D: Device<T>> Add<T> for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device<T>> Mul for &NDArray<T, D> {
+impl<T: Type, D: Device> Mul for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -147,7 +160,7 @@ impl<T: Type, D: Device<T>> Mul for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device<T>> Mul<T> for &NDArray<T, D> {
+impl<T: Type, D: Device> Mul<T> for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn mul(self, rhs: T) -> Self::Output {
@@ -155,9 +168,25 @@ impl<T: Type, D: Device<T>> Mul<T> for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device<T>> PartialEq for NDArray<T, D> {
+impl<T: Type, D: Device> PartialEq for NDArray<T, D> {
     fn eq(&self, other: &Self) -> bool {
         self.0.device.eq(self, other)
+    }
+}
+
+impl<T: Type + Pow<T, Output = T>, D: Device> Pow<&NDArray<T, D>> for &NDArray<T, D> {
+    type Output = NDArray<T, D>;
+
+    fn pow(self, rhs: &NDArray<T, D>) -> Self::Output {
+        self.0.device.pow(self, rhs)
+    }
+}
+
+impl<U: Type, T: Type + Pow<U, Output = T>, D: Device> Pow<U> for &NDArray<T, D> {
+    type Output = NDArray<T, D>;
+
+    fn pow(self, rhs: U) -> Self::Output {
+        self.0.device.pow_scalar(self, rhs)
     }
 }
 

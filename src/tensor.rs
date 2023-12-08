@@ -1,19 +1,20 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::operation::{
-    AddScalar, Broadcast, EWiseAdd, EWiseMul, MulScalar, Operation, Reshape, Summation,
+    AddScalar, Broadcast, EWiseAdd, EWiseMul, EWisePow, Ln, MulScalar, Operation, PowScalar,
+    Reshape, ScalarPow, Summation,
 };
-use crate::type_trait::{Len, Type};
+use crate::type_trait::{Len, PowTensor, Type};
 use lazy_static::lazy_static;
-use num_traits::{One, Zero};
-use std::ops::{Add, Mul, Neg, Sub};
+use num_traits::{Float, One, Pow, Zero};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::{Arc, RwLock};
 
 lazy_static! {
     pub static ref LAZY_MODE: bool = false;
 }
 
-pub(crate) struct Value<'a, T: Type, D: Device<T>> {
+pub(crate) struct Value<'a, T: Type, D: Device> {
     cached_data: Option<NDArray<T, D>>,
     pub inputs: Vec<Tensor<'a, T, D>>,
     op: Option<Box<dyn Operation<'a, T, D> + 'a>>,
@@ -22,13 +23,13 @@ pub(crate) struct Value<'a, T: Type, D: Device<T>> {
 }
 
 #[derive(Clone)]
-pub struct Tensor<'a, T: Type, D: Device<T>>(pub(crate) Arc<RwLock<Value<'a, T, D>>>);
+pub struct Tensor<'a, T: Type, D: Device>(pub(crate) Arc<RwLock<Value<'a, T, D>>>);
 
-impl<'a, T: Type, D: Device<T>> Tensor<'a, T, D> {
+impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
     pub fn new1d<A: Len<T>>(data: A, requires_grad: bool) -> Self {
         Self::make(
             Some(D::new(data.ptr(), &[data.len()])),
-            &[],
+            vec![],
             None,
             requires_grad,
         )
@@ -37,7 +38,7 @@ impl<'a, T: Type, D: Device<T>> Tensor<'a, T, D> {
     pub fn new2d<A: Len<T>, B: Len<A>>(data: B, requires_grad: bool) -> Self {
         Self::make(
             Some(D::new(data.ptr() as *mut T, &[data.len(), data[0].len()])),
-            &[],
+            vec![],
             None,
             requires_grad,
         )
@@ -49,29 +50,29 @@ impl<'a, T: Type, D: Device<T>> Tensor<'a, T, D> {
                 data.ptr() as *mut T,
                 &[data.len(), data[0].len(), data[0][0].len()],
             )),
-            &[],
+            vec![],
             None,
             requires_grad,
         )
     }
 
     pub fn ones(shape: &[usize], requires_grad: bool) -> Self {
-        Self::make(Some(D::ones(shape)), &[], None, requires_grad)
+        Self::make(Some(D::ones(shape)), vec![], None, requires_grad)
     }
 
     pub fn rand(shape: &[usize], low: T, high: T, requires_grad: bool) -> Self {
-        Self::make(Some(D::rand(shape, low, high)), &[], None, requires_grad)
+        Self::make(Some(D::rand(shape, low, high)), vec![], None, requires_grad)
     }
 
     pub(crate) fn make(
         cached_data: Option<NDArray<T, D>>,
-        inputs: &[Tensor<'a, T, D>],
+        inputs: Vec<Tensor<'a, T, D>>,
         op: Option<Box<dyn Operation<'a, T, D> + 'a>>,
         requires_grad: bool,
     ) -> Self {
         Self(Arc::new(RwLock::new(Value {
             cached_data,
-            inputs: inputs.to_vec(),
+            inputs,
             op,
             requires_grad,
             grad: None,
@@ -79,7 +80,7 @@ impl<'a, T: Type, D: Device<T>> Tensor<'a, T, D> {
     }
 
     pub fn detach(&self) -> Self {
-        Self::make(Some(self.realize_cached_data()), &[], None, false)
+        Self::make(Some(self.realize_cached_data()), vec![], None, false)
     }
 
     pub fn shape(&self) -> Vec<usize> {
@@ -87,15 +88,15 @@ impl<'a, T: Type, D: Device<T>> Tensor<'a, T, D> {
     }
 
     pub fn broadcast(&self, shape: &[usize]) -> Self {
-        Self::calc(Broadcast(shape.to_vec()), &[self])
+        Self::calc(Broadcast(shape.to_vec()), vec![self.clone()])
     }
 
     pub fn sum(&self, axes: Option<Vec<usize>>, keep_dims: bool) -> Self {
-        Self::calc(Summation(axes, keep_dims), &[self])
+        Self::calc(Summation(axes, keep_dims), vec![self.clone()])
     }
 
     pub fn reshape(&self, shape: Vec<usize>) -> Self {
-        Self::calc(Reshape(shape), &[self])
+        Self::calc(Reshape(shape), vec![self.clone()])
     }
 
     pub(crate) fn realize_cached_data(&self) -> NDArray<T, D> {
@@ -118,10 +119,9 @@ impl<'a, T: Type, D: Device<T>> Tensor<'a, T, D> {
         value.cached_data.clone().unwrap()
     }
 
-    fn calc(op: impl Operation<'a, T, D> + 'a, args: &[&Tensor<'a, T, D>]) -> Self {
-        let inputs = args.iter().map(|&x| x.clone()).collect::<Vec<_>>();
-        let requires_grad = inputs.iter().any(|x| x.0.read().unwrap().requires_grad);
-        let mut output = Self::make(None, &inputs, Some(Box::new(op)), requires_grad);
+    fn calc(op: impl Operation<'a, T, D> + 'a, args: Vec<Tensor<'a, T, D>>) -> Self {
+        let requires_grad = args.iter().any(|x| x.0.read().unwrap().requires_grad);
+        let mut output = Self::make(None, args, Some(Box::new(op)), requires_grad);
         if !*LAZY_MODE {
             if !requires_grad {
                 output = output.detach();
@@ -133,76 +133,167 @@ impl<'a, T: Type, D: Device<T>> Tensor<'a, T, D> {
     }
 }
 
-impl<'a, T: Type, D: Device<T>> Add for &Tensor<'a, T, D> {
+impl<'a, T: Type + Float + Pow<T, Output = T>, D: Device> Tensor<'a, T, D> {
+    pub fn ln(&self) -> Self {
+        Self::calc(Ln, vec![self.clone()])
+    }
+}
+
+impl<'a, T: Type, D: Device> Add for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Tensor::calc(EWiseAdd, &[self, rhs])
+        Tensor::calc(EWiseAdd, vec![self.clone(), rhs.clone()])
     }
 }
 
-impl<'a, T: Type + 'a, D: Device<T>> Add<T> for &Tensor<'a, T, D> {
+impl<'a, T: Type + 'a, D: Device> Add<T> for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn add(self, rhs: T) -> Self::Output {
-        Tensor::calc(AddScalar(rhs), &[self])
+        Tensor::calc(AddScalar(rhs), vec![self.clone()])
     }
 }
 
-impl<'a, T: Type, D: Device<T>> Mul for &Tensor<'a, T, D> {
+impl<'a, T: Type, D: Device> Mul for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        Tensor::calc(EWiseMul, &[self, rhs])
+        Tensor::calc(EWiseMul, vec![self.clone(), rhs.clone()])
     }
 }
 
-impl<'a, T: Type + 'a, D: Device<T>> Mul<T> for &Tensor<'a, T, D> {
+impl<'a, T: Type + 'a, D: Device> Mul<T> for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn mul(self, rhs: T) -> Self::Output {
-        Tensor::calc(MulScalar(rhs), &[self])
+        Tensor::calc(MulScalar(rhs), vec![self.clone()])
     }
 }
 
-impl<'a, T: Type, D: Device<T>> Sub for &Tensor<'a, T, D> {
+impl<'a, T: Type, D: Device> Sub for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Tensor::calc(EWiseAdd, &[self, &(rhs * (T::zero() - T::one()))])
+        self + &(rhs * (T::zero() - T::one()))
     }
 }
 
-impl<'a, T: Type + 'a, D: Device<T>> Sub<T> for &Tensor<'a, T, D> {
+impl<'a, T: Type + 'a, D: Device> Sub<T> for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn sub(self, rhs: T) -> Self::Output {
-        Tensor::calc(AddScalar(T::zero() - rhs), &[self])
+        self + (T::zero() - rhs)
     }
 }
 
-impl<'a, T: Type + 'a, D: Device<T>> Neg for &Tensor<'a, T, D> {
+impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Div for &Tensor<'a, T, D> {
+    type Output = Tensor<'a, T, D>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        self * &rhs.pow(T::zero() - T::one())
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device> Div<T> for &Tensor<'a, T, D> {
+    type Output = Tensor<'a, T, D>;
+
+    fn div(self, rhs: T) -> Self::Output {
+        self * (T::one() / rhs)
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device> Neg for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn neg(self) -> Self::Output {
-        Tensor::calc(MulScalar(T::zero() - T::one()), &[self])
+        Tensor::calc(MulScalar(T::zero() - T::one()), vec![self.clone()])
     }
 }
 
-impl<'a, T: Type + 'a, D: Device<T>> PartialEq for Tensor<'a, T, D> {
+impl<'a, T: Type + 'a, D: Device> PartialEq for Tensor<'a, T, D> {
     fn eq(&self, other: &Self) -> bool {
         self.realize_cached_data() == other.realize_cached_data()
     }
 }
 
+impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Pow<&Tensor<'a, T, D>>
+    for &Tensor<'a, T, D>
+{
+    type Output = Tensor<'a, T, D>;
+
+    fn pow(self, rhs: &Tensor<'a, T, D>) -> Self::Output {
+        Tensor::calc(EWisePow, vec![self.clone(), rhs.clone()])
+    }
+}
+
+impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Pow<T> for &Tensor<'a, T, D> {
+    type Output = Tensor<'a, T, D>;
+
+    fn pow(self, rhs: T) -> Self::Output {
+        Tensor::calc(PowScalar(rhs), vec![self.clone()])
+    }
+}
+
+macro_rules! impl_div {
+    ($($t:ty),*) => {
+        $(
+            impl<'a, D: Device> Div<&Tensor<'a, $t, D>> for $t {
+                type Output = Tensor<'a, $t, D>;
+
+                fn div(self, rhs: &Tensor<'a, $t, D>) -> Self::Output {
+                    self * &rhs.pow(<$t as Zero>::zero() - <$t as One>::one())
+                }
+            }
+        )*
+    };
+}
+
+impl_div!(f32, f64);
+
+macro_rules! impl_pow_scalar {
+    ($t:ty, $u:ty) => {
+        impl<'a, D: Device> Pow<$u> for &Tensor<'a, $t, D> {
+            type Output = Tensor<'a, $t, D>;
+
+            fn pow(self, rhs: $u) -> Self::Output {
+                Tensor::calc(PowScalar(rhs), vec![self.clone()])
+            }
+        }
+    };
+}
+
+macro_rules! impl_scalar_pow {
+    ($($t:ty),*) => {
+        $(
+            impl PowTensor for $t {
+                fn powt<'a, D: Device>(self, rhs: &Tensor<'a, $t, D>) -> Tensor<'a, $t, D> {
+                    Tensor::calc(ScalarPow(self), vec![rhs.clone()])
+                }
+            }
+        )*
+    };
+}
+
+impl_pow_scalar!(f32, i32);
+impl_pow_scalar!(f64, i32);
+impl_pow_scalar!(isize, u32);
+impl_pow_scalar!(i8, u32);
+impl_pow_scalar!(i16, u32);
+impl_pow_scalar!(i32, u32);
+impl_pow_scalar!(i64, u32);
+impl_pow_scalar!(i128, u32);
+
+impl_scalar_pow!(f32, f64);
+
 macro_rules! impl_add {
     ($($t:ty),*) => {
         $(
-            impl<'a, D: Device<$t>> Add<&Tensor<'a, $t, D>> for $t {
+            impl<'a, D: Device> Add<&Tensor<'a, $t, D>> for $t {
                 type Output = Tensor<'a, $t, D>;
 
                 fn add(self, rhs: &Tensor<'a, $t, D>) -> Self::Output {
-                    Tensor::calc(AddScalar(self), &[rhs])
+                    Tensor::calc(AddScalar(self), vec![rhs.clone()])
                 }
             }
         )*
@@ -212,11 +303,11 @@ macro_rules! impl_add {
 macro_rules! impl_mul {
     ($($t:ty),*) => {
         $(
-            impl<'a, D: Device<$t>> Mul<&Tensor<'a, $t, D>> for $t {
+            impl<'a, D: Device> Mul<&Tensor<'a, $t, D>> for $t {
                 type Output = Tensor<'a, $t, D>;
 
                 fn mul(self, rhs: &Tensor<'a, $t, D>) -> Self::Output {
-                    Tensor::calc(MulScalar(self), &[rhs])
+                    Tensor::calc(MulScalar(self), vec![rhs.clone()])
                 }
             }
         )*
@@ -226,11 +317,11 @@ macro_rules! impl_mul {
 macro_rules! impl_sub {
     ($($t:ty),*) => {
         $(
-            impl<'a, D: Device<$t>> Sub<&Tensor<'a, $t, D>> for $t {
+            impl<'a, D: Device> Sub<&Tensor<'a, $t, D>> for $t {
                 type Output = Tensor<'a, $t, D>;
 
                 fn sub(self, rhs: &Tensor<'a, $t, D>) -> Self::Output {
-                    Tensor::calc(AddScalar(self), &[&(rhs * (<$t as Zero>::zero() - <$t as One>::one()))])
+                    self + &(rhs * (<$t as Zero>::zero() - <$t as One>::one()))
                 }
             }
         )*
@@ -249,15 +340,6 @@ mod tests {
     use crate::cpu::CPU;
 
     #[test]
-    fn test_add() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        assert!(&a + &b == Tensor::new2d([[2.0, 4.0, 6.0], [5.0, 7.0, 9.0]], false));
-        assert!(&a + 1.0 == Tensor::new1d([2.0, 3.0, 4.0], false));
-        assert!(2.0 + &b == Tensor::new2d([[3.0, 4.0, 5.0], [6.0, 7.0, 8.0]], false));
-    }
-
-    #[test]
     fn test_new() {
         let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
         let b = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
@@ -268,11 +350,12 @@ mod tests {
     }
 
     #[test]
-    fn test_broadcast() {
+    fn test_add() {
         let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::<f32, CPU>::new2d([[1.0], [4.0]], false);
-        assert_eq!(a.broadcast(&[2, 3]).shape(), &[2, 3]);
-        assert_eq!(b.broadcast(&[1, 2, 3]).shape(), &[1, 2, 3]);
+        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        assert!(&a + &b == Tensor::new2d([[2.0, 4.0, 6.0], [5.0, 7.0, 9.0]], false));
+        assert!(&a + 1.0 == Tensor::new1d([2.0, 3.0, 4.0], false));
+        assert!(2.0 + &b == Tensor::new2d([[3.0, 4.0, 5.0], [6.0, 7.0, 8.0]], false));
     }
 
     #[test]
@@ -294,12 +377,50 @@ mod tests {
     }
 
     #[test]
+    fn test_div() {
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        assert!(&a / &b == Tensor::new2d([[1.0, 1.0, 1.0], [0.25, 0.4, 0.5]], false));
+        assert!(&a / 2.0 == Tensor::new1d([0.5, 1.0, 1.5], false));
+        assert!(2.0 / &b == Tensor::new2d([[2.0, 1.0, 2.0 / 3.0], [0.5, 0.4, 1.0 / 3.0]], false));
+    }
+
+    #[test]
+    fn test_neg() {
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        assert!(-&a == Tensor::new1d([-1.0, -2.0, -3.0], false));
+    }
+
+    #[test]
+    fn test_pow() {
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
+        assert!(a.pow(&b) == Tensor::new2d([[1.0, 4.0, 27.0], [1.0, 32.0, 729.0]], false));
+        assert!(a.pow(2.0) == Tensor::new1d([1.0, 4.0, 9.0], false));
+        assert!(2.0.powt(&b) == Tensor::new2d([[2.0, 4.0, 8.0], [16.0, 32.0, 64.0]], false));
+    }
+
+    #[test]
+    fn test_ln() {
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        assert!(a.ln() == Tensor::new1d([0.0, std::f32::consts::LN_2, 1.0986123], false));
+    }
+
+    #[test]
     fn test_sum() {
         let a = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
         assert!(a.sum(None, false) == Tensor::new1d([21.0], false));
         assert!(a.sum(Some(vec![0]), true) == Tensor::new2d([[5.0, 7.0, 9.0]], false));
         assert!(a.sum(Some(vec![1]), false) == Tensor::new1d([6.0, 15.0], false));
         assert!(a.sum(Some(vec![0, 1]), true) == Tensor::new2d([[21.0]], false));
+    }
+
+    #[test]
+    fn test_broadcast() {
+        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
+        let b = Tensor::<f32, CPU>::new2d([[1.0], [4.0]], false);
+        assert_eq!(a.broadcast(&[2, 3]).shape(), &[2, 3]);
+        assert_eq!(b.broadcast(&[1, 2, 3]).shape(), &[1, 2, 3]);
     }
 
     #[test]
@@ -310,7 +431,9 @@ mod tests {
         );
         assert!(a.reshape(vec![6]) == Tensor::new1d([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], false));
 
-        let b = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], true).broadcast(&[2, 3]);
-        assert!(b.reshape(vec![3, 2]) == Tensor::new2d([[1.0, 2.0], [3.0, 1.0], [2.0, 3.0]], true));
+        let b = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false).broadcast(&[2, 3]);
+        assert!(
+            b.reshape(vec![3, 2]) == Tensor::new2d([[1.0, 2.0], [3.0, 1.0], [2.0, 3.0]], false)
+        );
     }
 }

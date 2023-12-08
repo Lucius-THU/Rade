@@ -1,3 +1,5 @@
+use crate::device::Device;
+use crate::tensor::Tensor;
 use num_traits::Num;
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
@@ -25,7 +27,7 @@ impl Type for f32 {
 
 impl Type for f64 {
     fn atol() -> Self {
-        1e-5
+        1e-8
     }
 }
 
@@ -37,7 +39,7 @@ macro_rules! impl_type {
     };
 }
 
-impl_type!(isize, i8, i16, i32, i64, i128);
+impl_type!(usize, u8, u16, u32, u64, u128, isize, i8, i16, i32, i64, i128);
 
 pub trait Len<T>: Index<usize, Output = T> {
     fn ptr(&self) -> *mut T;
@@ -64,3 +66,7 @@ impl_len!(
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
     27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50
 );
+
+pub trait PowTensor: Type {
+    fn powt<'a, D: Device>(self, rhs: &Tensor<'a, Self, D>) -> Tensor<'a, Self, D>;
+}
