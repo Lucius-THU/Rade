@@ -35,6 +35,14 @@ pub(crate) struct ScalarPow<T: Type>(pub T);
 
 pub(crate) struct Ln;
 
+pub(crate) struct Transpose(pub Option<(usize, usize)>);
+
+pub(crate) struct MaxScalar<T: Type>(pub T);
+
+pub(crate) struct GTScalar<T: Type>(pub T);
+
+pub(crate) struct Matmul;
+
 impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Broadcast {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].broadcast(&self.0)
@@ -97,7 +105,7 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for EWiseAdd {
     ) -> Vec<Tensor<'a, T, D>> {
         let inputs = &node.0.write().unwrap().inputs;
         let in_grads = vec![out_grad.clone(), out_grad.clone()];
-        reduce_to_shape(in_grads, inputs, out_grad.shape())
+        reduce_to_shape(in_grads, inputs)
     }
 }
 
@@ -123,7 +131,7 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for EWiseMul {
     ) -> Vec<Tensor<'a, T, D>> {
         let inputs = &node.0.write().unwrap().inputs;
         let in_grads = vec![out_grad * &inputs[1], out_grad * &inputs[0]];
-        reduce_to_shape(in_grads, inputs, out_grad.shape())
+        reduce_to_shape(in_grads, inputs)
     }
 }
 
@@ -152,7 +160,7 @@ impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Operation<'a, T, 
             &(out_grad * &inputs[1]) * &inputs[0].pow(&(&inputs[1] - T::one())),
             &(out_grad * &inputs[0].pow(&inputs[1])) * &inputs[1].ln(),
         ];
-        reduce_to_shape(in_grads, inputs, out_grad.shape())
+        reduce_to_shape(in_grads, inputs)
     }
 }
 
@@ -228,6 +236,101 @@ impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Operation<'a, T, 
     }
 }
 
+impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Transpose {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        let len = args[0].ndim();
+        if len < 2 {
+            panic!("Transpose requires at least 2 dimensions");
+        }
+        let mut axes = (0..len).collect::<Vec<_>>();
+        if let Some((i, j)) = self.0 {
+            axes.swap(i, j);
+        } else {
+            axes.swap(len - 1, len - 2);
+        };
+        args[0].permute(&axes)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
+        vec![out_grad.transpose(self.0)]
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for MaxScalar<T> {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].max_scalar(self.0)
+    }
+
+    fn gradient(
+        &self,
+        out_grad: &Tensor<'a, T, D>,
+        node: &Tensor<'a, T, D>,
+    ) -> Vec<Tensor<'a, T, D>> {
+        vec![out_grad * &node.gt(self.0)]
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for GTScalar<T> {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].gt_scalar(self.0)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
+        vec![out_grad.zeros_like(out_grad.0.read().unwrap().requires_grad)]
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Matmul {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        let mut lhs = &args[0];
+        let mut rhs = &args[1];
+        let lhs_shape = &lhs.0.shape;
+        let rhs_shape = &rhs.0.shape;
+        let lhs_len = lhs_shape.len();
+        let rhs_len = rhs_shape.len();
+        if lhs_len < 2 || rhs_len < 2 {
+            panic!("Matmul requires at least 2 dimensions");
+        }
+        if lhs_shape[lhs_len - 1] != rhs_shape[rhs_len - 2] {
+            panic!("Incompatible shapes: {:?} {:?}", lhs_shape, rhs_shape);
+        }
+        let lhs_reshape;
+        let rhs_reshape;
+        let lhs_shared_shape = &lhs_shape[..lhs_len - 2];
+        let rhs_shared_shape = &rhs_shape[..rhs_len - 2];
+        let [n, m, k] = [
+            lhs_shape[lhs_len - 2],
+            lhs_shape[lhs_len - 1],
+            rhs_shape[rhs_len - 1],
+        ];
+        if lhs_shared_shape != rhs_shared_shape {
+            let shape = broadcast_shapes(&lhs_shared_shape, &rhs_shared_shape);
+            if shape != lhs_shared_shape {
+                lhs_reshape = args[0].broadcast(&[shape.clone(), vec![n, m]].concat());
+                lhs = &lhs_reshape;
+            }
+            if shape != rhs_shared_shape {
+                rhs_reshape = args[1].broadcast(&[shape, vec![m, k]].concat());
+                rhs = &rhs_reshape;
+            }
+        }
+        lhs.matmul(rhs)
+    }
+
+    fn gradient(
+        &self,
+        out_grad: &Tensor<'a, T, D>,
+        node: &Tensor<'a, T, D>,
+    ) -> Vec<Tensor<'a, T, D>> {
+        let inputs = &node.0.write().unwrap().inputs;
+        let in_grads = vec![
+            out_grad.matmul(&inputs[1].transpose(None)),
+            inputs[0].transpose(None).matmul(out_grad),
+        ];
+        reduce_to_shape(in_grads, inputs)
+    }
+}
+
 fn broadcast_shapes(lhs: &[usize], rhs: &[usize]) -> Vec<usize> {
     if lhs.len() > rhs.len() {
         broadcast_shapes(rhs, lhs)
@@ -253,11 +356,10 @@ fn broadcast_shapes(lhs: &[usize], rhs: &[usize]) -> Vec<usize> {
 fn reduce_to_shape<'a, T: Type, D: Device>(
     mut grads: Vec<Tensor<'a, T, D>>,
     inputs: &[Tensor<T, D>],
-    shape: Vec<usize>,
 ) -> Vec<Tensor<'a, T, D>> {
     for i in 0..inputs.len() {
         let input_shape = inputs[i].shape();
-        if input_shape != shape {
+        if input_shape != grads[i].shape() {
             grads[i] = reduce_by_add(&grads[i], &input_shape);
         }
     }

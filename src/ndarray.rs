@@ -115,6 +115,18 @@ impl<T: Type, D: Device> NDArray<T, D> {
         ret
     }
 
+    pub fn max_scalar(&self, rhs: T) -> Self {
+        self.0.device.max_scalar(self, rhs)
+    }
+
+    pub fn gt_scalar(&self, rhs: T) -> Self {
+        self.0.device.gt_scalar(self, rhs)
+    }
+
+    pub fn matmul(&self, rhs: &Self) -> Self {
+        self.0.device.matmul(self, rhs)
+    }
+
     fn is_contiguous(&self) -> bool {
         self.0.strides == compact_strides(&self.0.shape)
     }
@@ -213,6 +225,30 @@ impl Idx {
         for (i, &dim) in self.shape.iter().enumerate().rev() {
             self.idx[i] += 1;
             if self.idx[i] == dim {
+                self.idx[i] = 0;
+            } else {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn next_in_dim(&mut self, dim: usize) -> bool {
+        for (i, &d) in self.shape[dim..].iter().enumerate().rev() {
+            self.idx[i + dim] += 1;
+            if self.idx[i + dim] == d {
+                self.idx[i + dim] = 0;
+            } else {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn next_out_dim(&mut self, dim: usize) -> bool {
+        for (i, &d) in self.shape[..dim].iter().enumerate().rev() {
+            self.idx[i] += 1;
+            if self.idx[i] == d {
                 self.idx[i] = 0;
             } else {
                 return true;

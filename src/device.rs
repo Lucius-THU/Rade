@@ -7,6 +7,8 @@ pub trait Device: Clone {
 
     fn ones<T: Type>(shape: &[usize]) -> NDArray<T, Self>;
 
+    fn zeros<T: Type>(shape: &[usize]) -> NDArray<T, Self>;
+
     fn rand<T: Type>(shape: &[usize], low: T, high: T) -> NDArray<T, Self>;
 
     fn add<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self>;
@@ -38,6 +40,12 @@ pub trait Device: Clone {
     ) -> NDArray<T, Self>;
 
     fn ln<T: Type + Float>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>;
+
+    fn max_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;
+
+    fn gt_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;
+
+    fn matmul<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self>;
 
     fn sum<T: Type>(
         &self,

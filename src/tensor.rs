@@ -1,8 +1,8 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::operation::{
-    AddScalar, Broadcast, EWiseAdd, EWiseMul, EWisePow, Ln, MulScalar, Operation, PowScalar,
-    Reshape, ScalarPow, Summation,
+    AddScalar, Broadcast, EWiseAdd, EWiseMul, EWisePow, GTScalar, Ln, Matmul, MaxScalar, MulScalar,
+    Operation, PowScalar, Reshape, ScalarPow, Summation, Transpose,
 };
 use crate::type_trait::{Len, PowTensor, Type};
 use lazy_static::lazy_static;
@@ -18,7 +18,7 @@ pub(crate) struct Value<'a, T: Type, D: Device> {
     cached_data: Option<NDArray<T, D>>,
     pub inputs: Vec<Tensor<'a, T, D>>,
     op: Option<Box<dyn Operation<'a, T, D> + 'a>>,
-    requires_grad: bool,
+    pub requires_grad: bool,
     grad: Option<Tensor<'a, T, D>>,
 }
 
@@ -60,6 +60,18 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
         Self::make(Some(D::ones(shape)), vec![], None, requires_grad)
     }
 
+    pub fn zeros(shape: &[usize], requires_grad: bool) -> Self {
+        Self::make(Some(D::zeros(shape)), vec![], None, requires_grad)
+    }
+
+    pub fn ones_like(&self, requires_grad: bool) -> Self {
+        Self::make(Some(D::ones(&self.shape())), vec![], None, requires_grad)
+    }
+
+    pub fn zeros_like(&self, requires_grad: bool) -> Self {
+        Self::make(Some(D::zeros(&self.shape())), vec![], None, requires_grad)
+    }
+
     pub fn rand(shape: &[usize], low: T, high: T, requires_grad: bool) -> Self {
         Self::make(Some(D::rand(shape, low, high)), vec![], None, requires_grad)
     }
@@ -97,6 +109,22 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
 
     pub fn reshape(&self, shape: Vec<usize>) -> Self {
         Self::calc(Reshape(shape), vec![self.clone()])
+    }
+
+    pub fn transpose(&self, axes: Option<(usize, usize)>) -> Self {
+        Self::calc(Transpose(axes), vec![self.clone()])
+    }
+
+    pub fn relu(&self) -> Self {
+        Self::calc(MaxScalar(T::zero()), vec![self.clone()])
+    }
+
+    pub fn gt(&self, rhs: T) -> Self {
+        Self::calc(GTScalar(rhs), vec![self.clone()])
+    }
+
+    pub fn matmul(&self, rhs: &Self) -> Self {
+        Self::calc(Matmul, vec![self.clone(), rhs.clone()])
     }
 
     pub(crate) fn realize_cached_data(&self) -> NDArray<T, D> {
@@ -341,9 +369,9 @@ mod tests {
 
     #[test]
     fn test_new() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        let c = Tensor::<f32, CPU>::new3d([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]], false);
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        let b = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        let c = Tensor::<f32, CPU>::new3d([[[1., 2.], [3., 4.], [5., 6.]]], false);
         assert_eq!(a.shape(), &[3]);
         assert_eq!(b.shape(), &[2, 3]);
         assert_eq!(c.shape(), &[1, 3, 2]);
@@ -351,89 +379,122 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        assert!(&a + &b == Tensor::new2d([[2.0, 4.0, 6.0], [5.0, 7.0, 9.0]], false));
-        assert!(&a + 1.0 == Tensor::new1d([2.0, 3.0, 4.0], false));
-        assert!(2.0 + &b == Tensor::new2d([[3.0, 4.0, 5.0], [6.0, 7.0, 8.0]], false));
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        let b = Tensor::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        assert!(&a + &b == Tensor::new2d([[2., 4., 6.], [5., 7., 9.]], false));
+        assert!(&a + 1. == Tensor::new1d([2., 3., 4.], false));
+        assert!(2. + &b == Tensor::new2d([[3., 4., 5.], [6., 7., 8.]], false));
     }
 
     #[test]
     fn test_mul() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        assert!(&a * &b == Tensor::new2d([[1.0, 4.0, 9.0], [4.0, 10.0, 18.0]], false));
-        assert!(&a * 2.0 == Tensor::new1d([2.0, 4.0, 6.0], false));
-        assert!(3.0 * &b == Tensor::new2d([[3.0, 6.0, 9.0], [12.0, 15.0, 18.0]], false));
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        let b = Tensor::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        assert!(&a * &b == Tensor::new2d([[1., 4., 9.], [4., 10., 18.]], false));
+        assert!(&a * 2. == Tensor::new1d([2., 4., 6.], false));
+        assert!(3. * &b == Tensor::new2d([[3., 6., 9.], [12., 15., 18.]], false));
     }
 
     #[test]
     fn test_sub() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        assert!(&a - &b == Tensor::new2d([[0.0, 0.0, 0.0], [-3.0, -3.0, -3.0]], false));
-        assert!(&a - 1.0 == Tensor::new1d([0.0, 1.0, 2.0], false));
-        assert!(2.0 - &b == Tensor::new2d([[1.0, 0.0, -1.0], [-2.0, -3.0, -4.0]], false));
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        let b = Tensor::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        assert!(&a - &b == Tensor::new2d([[0., 0., 0.], [-3., -3., -3.]], false));
+        assert!(&a - 1. == Tensor::new1d([0., 1., 2.], false));
+        assert!(2. - &b == Tensor::new2d([[1., 0., -1.], [-2., -3., -4.]], false));
     }
 
     #[test]
     fn test_div() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        assert!(&a / &b == Tensor::new2d([[1.0, 1.0, 1.0], [0.25, 0.4, 0.5]], false));
-        assert!(&a / 2.0 == Tensor::new1d([0.5, 1.0, 1.5], false));
-        assert!(2.0 / &b == Tensor::new2d([[2.0, 1.0, 2.0 / 3.0], [0.5, 0.4, 1.0 / 3.0]], false));
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        let b = Tensor::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        assert!(&a / &b == Tensor::new2d([[1., 1., 1.], [0.25, 0.4, 0.5]], false));
+        assert!(&a / 2. == Tensor::new1d([0.5, 1., 1.5], false));
+        assert!(2. / &b == Tensor::new2d([[2., 1., 2. / 3.], [0.5, 0.4, 1. / 3.]], false));
     }
 
     #[test]
     fn test_neg() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        assert!(-&a == Tensor::new1d([-1.0, -2.0, -3.0], false));
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        assert!(-&a == Tensor::new1d([-1., -2., -3.], false));
     }
 
     #[test]
     fn test_pow() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        assert!(a.pow(&b) == Tensor::new2d([[1.0, 4.0, 27.0], [1.0, 32.0, 729.0]], false));
-        assert!(a.pow(2.0) == Tensor::new1d([1.0, 4.0, 9.0], false));
-        assert!(2.0.powt(&b) == Tensor::new2d([[2.0, 4.0, 8.0], [16.0, 32.0, 64.0]], false));
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        let b = Tensor::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        assert!(a.pow(&b) == Tensor::new2d([[1., 4., 27.], [1., 32., 729.]], false));
+        assert!(a.pow(2.) == Tensor::new1d([1., 4., 9.], false));
+        assert!(2.0.powt(&b) == Tensor::new2d([[2., 4., 8.], [16., 32., 64.]], false));
     }
 
     #[test]
     fn test_ln() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        assert!(a.ln() == Tensor::new1d([0.0, std::f32::consts::LN_2, 1.0986123], false));
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        assert!(a.ln() == Tensor::new1d([0., std::f32::consts::LN_2, 1.0986123], false));
     }
 
     #[test]
     fn test_sum() {
-        let a = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        assert!(a.sum(None, false) == Tensor::new1d([21.0], false));
-        assert!(a.sum(Some(vec![0]), true) == Tensor::new2d([[5.0, 7.0, 9.0]], false));
-        assert!(a.sum(Some(vec![1]), false) == Tensor::new1d([6.0, 15.0], false));
-        assert!(a.sum(Some(vec![0, 1]), true) == Tensor::new2d([[21.0]], false));
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        assert!(a.sum(None, false) == Tensor::new1d([21.], false));
+        assert!(a.sum(Some(vec![0]), true) == Tensor::new2d([[5., 7., 9.]], false));
+        assert!(a.sum(Some(vec![1]), false) == Tensor::new1d([6., 15.], false));
+        assert!(a.sum(Some(vec![0, 1]), true) == Tensor::new2d([[21.]], false));
     }
 
     #[test]
     fn test_broadcast() {
-        let a = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false);
-        let b = Tensor::<f32, CPU>::new2d([[1.0], [4.0]], false);
+        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
+        let b = Tensor::<f32, CPU>::new2d([[1.], [4.]], false);
         assert_eq!(a.broadcast(&[2, 3]).shape(), &[2, 3]);
         assert_eq!(b.broadcast(&[1, 2, 3]).shape(), &[1, 2, 3]);
     }
 
     #[test]
     fn test_reshape() {
-        let a = Tensor::<f32, CPU>::new2d([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], false);
-        assert!(
-            a.reshape(vec![3, 2]) == Tensor::new2d([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], false)
-        );
-        assert!(a.reshape(vec![6]) == Tensor::new1d([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], false));
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        assert!(a.reshape(vec![3, 2]) == Tensor::new2d([[1., 2.], [3., 4.], [5., 6.]], false));
+        assert!(a.reshape(vec![6]) == Tensor::new1d([1., 2., 3., 4., 5., 6.], false));
 
-        let b = Tensor::<f32, CPU>::new1d([1.0, 2.0, 3.0], false).broadcast(&[2, 3]);
+        let b = Tensor::<f32, CPU>::new1d([1., 2., 3.], false).broadcast(&[2, 3]);
+        assert!(b.reshape(vec![3, 2]) == Tensor::new2d([[1., 2.], [3., 1.], [2., 3.]], false));
+    }
+
+    #[test]
+    fn test_transpose() {
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        assert!(a.transpose(None) == Tensor::new2d([[1., 4.], [2., 5.], [3., 6.]], false));
+        assert!(a.transpose(Some((1, 0))) == Tensor::new2d([[1., 4.], [2., 5.], [3., 6.]], false));
+    }
+
+    #[test]
+    fn test_relu() {
+        let a = Tensor::<f32, CPU>::new2d([[1., -2., 3.], [-4., 5., -6.]], false);
+        assert!(a.relu() == Tensor::new2d([[1., 0., 3.], [0., 5., 0.]], false));
+    }
+
+    #[test]
+    fn test_matmul() {
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        let b = Tensor::new2d([[-1., 2., -3.], [4., -5., 6.]], false);
+        let c = Tensor::new3d(
+            [
+                [[-0.1, -2.4, 3.7], [-4.1, -2.5, 1.8]],
+                [[-3.4, -4.3, 2.8], [-1.5, -1.1, 1.2]],
+            ],
+            false,
+        );
+        let d = &(&a + &b) * &b;
+        let e = &(&d.matmul(&c.transpose(None)) / 85.7)
+            .pow(3.)
+            .sum(Some(vec![1]), false)
+            - 1.2;
         assert!(
-            b.reshape(vec![3, 2]) == Tensor::new2d([[1.0, 2.0], [3.0, 1.0], [2.0, 3.0]], false)
+            e == Tensor::new2d(
+                [[27.7565333, -1.21271657], [5.02653611e-03, -1.11112233]],
+                false
+            )
         );
     }
 }
