@@ -4,14 +4,16 @@ use crate::operation::{
     AddScalar, Broadcast, EWiseAdd, EWiseMul, EWisePow, GTScalar, Ln, Matmul, MaxScalar, MulScalar,
     Operation, PowScalar, Reshape, ScalarPow, Summation, Transpose,
 };
-use crate::type_trait::{Len, PowTensor, Type};
+use crate::type_trait::{Float, Len, Type};
 use lazy_static::lazy_static;
-use num_traits::{Float, One, Pow, Zero};
+use num_traits::{NumCast, One, Pow, Zero};
+use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Div, Mul, Neg, Sub};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 lazy_static! {
     pub static ref LAZY_MODE: bool = false;
+    pub static ref TENSOR_CNT: Mutex<usize> = Mutex::new(0);
 }
 
 pub(crate) struct Value<'a, T: Type, D: Device> {
@@ -23,7 +25,7 @@ pub(crate) struct Value<'a, T: Type, D: Device> {
 }
 
 #[derive(Clone)]
-pub struct Tensor<'a, T: Type, D: Device>(pub(crate) Arc<RwLock<Value<'a, T, D>>>);
+pub struct Tensor<'a, T: Type, D: Device>(pub(crate) Arc<RwLock<Value<'a, T, D>>>, usize);
 
 impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
     pub fn new1d<A: Len<T>>(data: A, requires_grad: bool) -> Self {
@@ -82,13 +84,19 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
         op: Option<Box<dyn Operation<'a, T, D> + 'a>>,
         requires_grad: bool,
     ) -> Self {
-        Self(Arc::new(RwLock::new(Value {
-            cached_data,
-            inputs,
-            op,
-            requires_grad,
-            grad: None,
-        })))
+        let mut cnt = TENSOR_CNT.lock().unwrap();
+        let tensor = Self(
+            Arc::new(RwLock::new(Value {
+                cached_data,
+                inputs,
+                op,
+                requires_grad,
+                grad: None,
+            })),
+            *cnt,
+        );
+        *cnt += 1;
+        tensor
     }
 
     pub fn detach(&self) -> Self {
@@ -96,7 +104,46 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
     }
 
     pub fn shape(&self) -> Vec<usize> {
-        self.realize_cached_data().0.shape.to_vec()
+        self.realize_cached_data().shape()
+    }
+
+    pub fn grad(&self) -> Option<Self> {
+        self.0.read().unwrap().grad.clone()
+    }
+
+    pub fn zero_grad(&self) {
+        self.0.write().unwrap().grad = None;
+    }
+
+    pub fn data(&self) -> Option<NDArray<T, D>> {
+        self.0.read().unwrap().cached_data.clone()
+    }
+
+    pub fn backward(&self) {
+        let mut visited = HashSet::new();
+        let mut stack = vec![];
+        let mut grads = HashMap::new();
+        grads.insert(self.1, vec![Tensor::ones_like(self, true)]);
+        topo_sort(self, &mut visited, &mut stack);
+        for node in stack.iter().rev() {
+            node.0.write().unwrap().grad = grads[&node.1].iter().fold(None, |acc, x| {
+                if acc.is_none() {
+                    Some(x.clone())
+                } else {
+                    Some(&acc.unwrap() + x)
+                }
+            });
+            let value = node.0.read().unwrap();
+            if let Some(op) = &value.op {
+                let in_grads = op.gradient(&node.0.read().unwrap().grad.as_ref().unwrap(), &node);
+                for (i, input) in value.inputs.iter().enumerate() {
+                    grads
+                        .entry(input.1)
+                        .or_insert_with(|| vec![])
+                        .push(in_grads[i].clone());
+                }
+            }
+        }
     }
 
     pub fn broadcast(&self, shape: &[usize]) -> Self {
@@ -161,9 +208,18 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
     }
 }
 
-impl<'a, T: Type + Float + Pow<T, Output = T>, D: Device> Tensor<'a, T, D> {
+impl<'a, T: Float, D: Device> Tensor<'a, T, D> {
     pub fn ln(&self) -> Self {
         Self::calc(Ln, vec![self.clone()])
+    }
+
+    pub fn exp(&self) -> Self {
+        T::exp(T::one()).powt(self)
+    }
+
+    pub fn kaiming_uniform(fan_in: usize, fan_out: usize, requires_grad: bool) -> Self {
+        let bound = T::sqrt(T::from(6.).unwrap() / T::from(fan_in).unwrap());
+        Self::rand(&[fan_in, fan_out], -bound, bound, requires_grad)
     }
 }
 
@@ -215,11 +271,11 @@ impl<'a, T: Type + 'a, D: Device> Sub<T> for &Tensor<'a, T, D> {
     }
 }
 
-impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Div for &Tensor<'a, T, D> {
+impl<'a, T: Float + 'a, D: Device> Div for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn div(self, rhs: Self) -> Self::Output {
-        self * &rhs.pow(T::zero() - T::one())
+        self * &rhs.pow(T::from(-1).unwrap())
     }
 }
 
@@ -245,9 +301,7 @@ impl<'a, T: Type + 'a, D: Device> PartialEq for Tensor<'a, T, D> {
     }
 }
 
-impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Pow<&Tensor<'a, T, D>>
-    for &Tensor<'a, T, D>
-{
+impl<'a, T: Float + 'a, D: Device> Pow<&Tensor<'a, T, D>> for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn pow(self, rhs: &Tensor<'a, T, D>) -> Self::Output {
@@ -255,7 +309,7 @@ impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Pow<&Tensor<'a, T
     }
 }
 
-impl<'a, T: Type + Float + Pow<T, Output = T> + 'a, D: Device> Pow<T> for &Tensor<'a, T, D> {
+impl<'a, T: Float + 'a, D: Device> Pow<T> for &Tensor<'a, T, D> {
     type Output = Tensor<'a, T, D>;
 
     fn pow(self, rhs: T) -> Self::Output {
@@ -270,7 +324,7 @@ macro_rules! impl_div {
                 type Output = Tensor<'a, $t, D>;
 
                 fn div(self, rhs: &Tensor<'a, $t, D>) -> Self::Output {
-                    self * &rhs.pow(<$t as Zero>::zero() - <$t as One>::one())
+                    self * &rhs.pow(<$t as NumCast>::from(-1).unwrap())
                 }
             }
         )*
@@ -294,7 +348,7 @@ macro_rules! impl_pow_scalar {
 macro_rules! impl_scalar_pow {
     ($($t:ty),*) => {
         $(
-            impl PowTensor for $t {
+            impl Float for $t {
                 fn powt<'a, D: Device>(self, rhs: &Tensor<'a, $t, D>) -> Tensor<'a, $t, D> {
                     Tensor::calc(ScalarPow(self), vec![rhs.clone()])
                 }
@@ -362,6 +416,20 @@ impl_mul!(isize, i8, i16, i32, i64, i128, f32, f64);
 
 impl_sub!(isize, i8, i16, i32, i64, i128, f32, f64);
 
+fn topo_sort<'a, T: Type, D: Device>(
+    node: &Tensor<'a, T, D>,
+    visited: &mut HashSet<usize>,
+    stack: &mut Vec<Tensor<'a, T, D>>,
+) {
+    if !visited.contains(&node.1) && node.0.read().unwrap().requires_grad {
+        visited.insert(node.1);
+        for input in &node.0.read().unwrap().inputs {
+            topo_sort(input, visited, stack);
+        }
+        stack.push(node.clone());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,12 +437,10 @@ mod tests {
 
     #[test]
     fn test_new() {
-        let a = Tensor::<f32, CPU>::new1d([1., 2., 3.], false);
-        let b = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], false);
-        let c = Tensor::<f32, CPU>::new3d([[[1., 2.], [3., 4.], [5., 6.]]], false);
-        assert_eq!(a.shape(), &[3]);
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], false);
+        let b = Tensor::<f32, CPU>::kaiming_uniform(2, 3, false);
+        assert_eq!(a.shape(), &[2, 3]);
         assert_eq!(b.shape(), &[2, 3]);
-        assert_eq!(c.shape(), &[1, 3, 2]);
     }
 
     #[test]
@@ -475,15 +541,15 @@ mod tests {
     }
 
     #[test]
-    fn test_matmul() {
-        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], false);
-        let b = Tensor::new2d([[-1., 2., -3.], [4., -5., 6.]], false);
+    fn test_matmul_and_backward() {
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], true);
+        let b = Tensor::new2d([[-1., 2., -3.], [4., -5., 6.]], true);
         let c = Tensor::new3d(
             [
                 [[-0.1, -2.4, 3.7], [-4.1, -2.5, 1.8]],
                 [[-3.4, -4.3, 2.8], [-1.5, -1.1, 1.2]],
             ],
-            false,
+            true,
         );
         let d = &(&a + &b) * &b;
         let e = &(&d.matmul(&c.transpose(None)) / 85.7)
@@ -495,6 +561,44 @@ mod tests {
                 [[27.7565333, -1.21271657], [5.02653611e-03, -1.11112233]],
                 false
             )
+        );
+
+        e.backward();
+        assert!(
+            a.grad().unwrap()
+                == Tensor::new2d(
+                    [
+                        [0.02772277, -0.0672842, -0.07850484],
+                        [-0.73267158, 4.88346243, 8.07030603]
+                    ],
+                    false
+                )
+        );
+        assert!(
+            b.grad().unwrap()
+                == Tensor::new2d(
+                    [
+                        [0.02772277, -0.20185259, -0.07850484],
+                        [-2.19801474, 4.88346243, 24.21091808]
+                    ],
+                    false
+                )
+        );
+        assert!(
+            c.grad().unwrap()
+                == Tensor::new3d(
+                    [
+                        [
+                            [10.5657550, 0.0140563070, 23.7729488],
+                            [3.90452972e-04, 0.0152520692, 8.78519186e-04]
+                        ],
+                        [
+                            [1.31348380, 0.0451217215, 2.95533854],
+                            [0.224900912, 2.95280060e-03, 0.506027051]
+                        ]
+                    ],
+                    false
+                )
         );
     }
 }

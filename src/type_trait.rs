@@ -1,6 +1,6 @@
 use crate::device::Device;
 use crate::tensor::Tensor;
-use num_traits::Num;
+use num_traits::{Num, Pow};
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
 use std::ops::{Add, Index};
@@ -67,6 +67,6 @@ impl_len!(
     27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50
 );
 
-pub trait PowTensor: Type {
+pub trait Float: Type + num_traits::Float + Pow<Self, Output = Self> {
     fn powt<'a, D: Device>(self, rhs: &Tensor<'a, Self, D>) -> Tensor<'a, Self, D>;
 }

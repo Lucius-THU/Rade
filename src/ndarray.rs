@@ -43,6 +43,10 @@ impl<T: Type, D: Device> NDArray<T, D> {
         }))
     }
 
+    pub(crate) fn shape(&self) -> Vec<usize> {
+        self.0.shape.to_vec()
+    }
+
     pub(crate) fn ndim(&self) -> usize {
         self.0.shape.len()
     }
