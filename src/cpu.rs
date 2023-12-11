@@ -1,7 +1,7 @@
 use crate::device::Device;
 use crate::ndarray::{self, Idx, NDArray, Storage};
 use crate::tensor::Tensor;
-use crate::type_trait::Type;
+use crate::type_trait::{Type, Unsigned};
 use num_traits::{Float, Pow};
 use rand::distributions::{Distribution, Uniform};
 use std::fmt::{Display, Formatter, Result};
@@ -44,6 +44,27 @@ impl Device for CPU {
             0,
             Self,
         )
+    }
+
+    fn one_hot<T: Type, U: Unsigned>(
+        indices: &NDArray<U, Self>,
+        num_classes: usize,
+    ) -> NDArray<T, Self> {
+        let mut shape = indices.0.shape.clone();
+        let strides = ndarray::compact_strides(&shape);
+        let mut data = vec![T::zero(); shape[0] * strides[0] * num_classes];
+        let mut idx = Idx::new(&shape);
+        let mut i = 0;
+        loop {
+            data[i * num_classes + indices[&idx].to_usize().unwrap()] = T::one();
+            i += 1;
+            if !idx.next() {
+                break;
+            }
+        }
+        shape.push(num_classes);
+        let strides = ndarray::compact_strides(&shape);
+        NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
     }
 
     fn rand<T: Type>(shape: &[usize], low: T, high: T) -> NDArray<T, Self> {
@@ -197,10 +218,10 @@ impl Device for CPU {
                 break;
             }
         }
-        NDArray::make(Storage::CPU(data), shape.to_vec(), strides, 0, Self)
+        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
     }
 
-    fn max_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
+    fn maximum_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
         let shape = &lhs.0.shape;
         let strides = ndarray::compact_strides(shape);
         let mut data = Vec::with_capacity(shape[0] * strides[0]);
@@ -211,7 +232,7 @@ impl Device for CPU {
                 break;
             }
         }
-        NDArray::make(Storage::CPU(data), shape.to_vec(), strides, 0, Self)
+        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
     }
 
     fn gt_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
@@ -225,7 +246,7 @@ impl Device for CPU {
                 break;
             }
         }
-        NDArray::make(Storage::CPU(data), shape.to_vec(), vec![1], 0, Self)
+        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
     }
 
     fn matmul<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
@@ -291,6 +312,51 @@ impl Device for CPU {
         NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
     }
 
+    fn max<T: Type>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        shape: Vec<usize>,
+        reduce_dims: usize,
+    ) -> NDArray<T, Self> {
+        let strides = ndarray::compact_strides(&shape);
+        let mut data = Vec::with_capacity(shape[0] * strides[0]);
+        let mut idx = Idx::new(&lhs.0.shape);
+        let reduce_lens = idx.shape[reduce_dims..lhs.ndim()].iter().product::<usize>();
+        loop {
+            let mut max = lhs[&idx];
+            let mut stop = !idx.next();
+            for _ in 1..reduce_lens {
+                if lhs[&idx] > max {
+                    max = lhs[&idx];
+                }
+                stop = !idx.next();
+            }
+            data.push(max);
+            if stop {
+                break;
+            }
+        }
+        NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
+    }
+
+    fn equal<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
+        let shape = &lhs.0.shape;
+        let strides = ndarray::compact_strides(shape);
+        let mut data = Vec::with_capacity(shape[0] * strides[0]);
+        let mut idx = Idx::new(shape);
+        loop {
+            data.push(if lhs[&idx] == rhs[&idx] {
+                T::one()
+            } else {
+                T::zero()
+            });
+            if !idx.next() {
+                break;
+            }
+        }
+        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
+    }
+
     fn contiguous<T: Type>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self> {
         let shape = &lhs.0.shape;
         let strides = ndarray::compact_strides(shape);
@@ -302,7 +368,15 @@ impl Device for CPU {
                 break;
             }
         }
-        NDArray::make(Storage::CPU(data), shape.to_vec(), strides, 0, Self)
+        NDArray::make(Storage::CPU(data), shape.clone(), strides, 0, Self)
+    }
+
+    fn data<T: Type>(lhs: &NDArray<T, Self>) -> Vec<T> {
+        if let Storage::CPU(data) = &lhs.0.data.as_ref() {
+            data.clone()
+        } else {
+            panic!("Tensor Storage mismatched with Device")
+        }
     }
 }
 

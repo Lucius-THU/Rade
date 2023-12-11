@@ -7,7 +7,20 @@ pub trait Module<'a, T: Type + 'a, D: Device> {
     fn forward(&mut self, input: &Tensor<'a, T, D>) -> Tensor<'a, T, D>;
     fn parameters(&self) -> Vec<&Tensor<'a, T, D>>;
     fn train(&mut self) {}
+
     fn eval(&mut self) {}
+
+    fn zero_grad(&mut self) {
+        for parameter in self.parameters() {
+            parameter.zero_grad();
+        }
+    }
+
+    fn step(&mut self, lr: T) {
+        for parameter in self.parameters() {
+            parameter.set_data(parameter - &(&parameter.grad().unwrap() * lr));
+        }
+    }
 }
 
 pub struct Linear<'a, T: Float, D: Device> {
@@ -34,13 +47,17 @@ pub struct Dropout<T: Float> {
     training: bool,
 }
 
-pub struct Residual<'a, T: Type, D: Device>(Box<dyn Module<'a, T, D>>);
+pub struct Residual<'a, T: Type, D: Device>(Box<dyn Module<'a, T, D> + 'a>);
 
 impl<'a, T: Float, D: Device> Linear<'a, T, D> {
     pub fn new(in_features: usize, out_features: usize, bias: bool) -> Self {
         let weight = Tensor::kaiming_uniform(in_features, out_features, true);
         let bias = if bias {
-            Some(Tensor::kaiming_uniform(out_features, 1, true))
+            Some(
+                Tensor::kaiming_uniform(out_features, 1, true)
+                    .reshape(vec![out_features])
+                    .detach(true),
+            )
         } else {
             None
         };
@@ -191,7 +208,7 @@ impl<'a, T: Float + 'a, D: Device> Module<'a, T, D> for Dropout<T> {
 }
 
 impl<'a, T: Type, D: Device> Residual<'a, T, D> {
-    pub fn new(module: Box<dyn Module<'a, T, D>>) -> Self {
+    pub fn new(module: Box<dyn Module<'a, T, D> + 'a>) -> Self {
         Self(module)
     }
 }
@@ -238,6 +255,5 @@ mod tests {
         let output = sequential.forward(&input);
         assert_eq!(output.shape(), &[2, 1]);
         assert_eq!(sequential.parameters().len(), 4);
-        println!("{output}");
     }
 }

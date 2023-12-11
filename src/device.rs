@@ -1,5 +1,5 @@
 use crate::ndarray::NDArray;
-use crate::type_trait::Type;
+use crate::type_trait::{Type, Unsigned};
 use num_traits::{Float, Pow};
 
 pub trait Device: Clone {
@@ -8,6 +8,11 @@ pub trait Device: Clone {
     fn ones<T: Type>(shape: &[usize]) -> NDArray<T, Self>;
 
     fn zeros<T: Type>(shape: &[usize]) -> NDArray<T, Self>;
+
+    fn one_hot<T: Type, U: Unsigned>(
+        indices: &NDArray<U, Self>,
+        num_classes: usize,
+    ) -> NDArray<T, Self>;
 
     fn rand<T: Type>(shape: &[usize], low: T, high: T) -> NDArray<T, Self>;
 
@@ -41,7 +46,7 @@ pub trait Device: Clone {
 
     fn ln<T: Type + Float>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>;
 
-    fn max_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;
+    fn maximum_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;
 
     fn gt_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;
 
@@ -54,5 +59,16 @@ pub trait Device: Clone {
         reduce_dims: usize,
     ) -> NDArray<T, Self>;
 
+    fn max<T: Type>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        shape: Vec<usize>,
+        reduce_dims: usize,
+    ) -> NDArray<T, Self>;
+
+    fn equal<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self>;
+
     fn contiguous<T: Type>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>;
+
+    fn data<T: Type>(lhs: &NDArray<T, Self>) -> Vec<T>;
 }

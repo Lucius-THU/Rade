@@ -107,6 +107,12 @@ impl<T: Type, D: Device> NDArray<T, D> {
         self.0.device.sum(&perm, shape, self.ndim() - axis.len())
     }
 
+    pub fn max(&self, axis: Option<Vec<usize>>, keep_dims: bool) -> Self {
+        let axis = axis.unwrap_or((0..self.ndim()).collect::<Vec<_>>());
+        let (perm, shape) = self.reduce_axes(&axis, keep_dims);
+        self.0.device.max(&perm, shape, self.ndim() - axis.len())
+    }
+
     pub fn reshape(&self, shape: &[usize]) -> Self {
         let mut ret = if self.is_contiguous() {
             self.clone()
@@ -120,7 +126,7 @@ impl<T: Type, D: Device> NDArray<T, D> {
     }
 
     pub fn max_scalar(&self, rhs: T) -> Self {
-        self.0.device.max_scalar(self, rhs)
+        self.0.device.maximum_scalar(self, rhs)
     }
 
     pub fn gt_scalar(&self, rhs: T) -> Self {
@@ -129,6 +135,10 @@ impl<T: Type, D: Device> NDArray<T, D> {
 
     pub fn matmul(&self, rhs: &Self) -> Self {
         self.0.device.matmul(self, rhs)
+    }
+
+    pub fn equal(&self, rhs: &Self) -> Self {
+        self.0.device.equal(self, rhs)
     }
 
     fn is_contiguous(&self) -> bool {

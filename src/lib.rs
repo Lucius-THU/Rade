@@ -1,5 +1,6 @@
 pub mod cpu;
 pub mod device;
+pub mod functional;
 mod ndarray;
 pub mod nn;
 mod operation;

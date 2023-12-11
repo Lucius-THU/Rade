@@ -40,11 +40,15 @@ pub(crate) struct Ln;
 
 pub(crate) struct Transpose(pub Option<(usize, usize)>);
 
-pub(crate) struct MaxScalar<T: Type>(pub T);
+pub(crate) struct MaximumScalar<T: Type>(pub T);
 
 pub(crate) struct GTScalar<T: Type>(pub T);
 
 pub(crate) struct Matmul;
+
+pub(crate) struct Max(pub Option<Vec<usize>>, pub bool);
+
+pub(crate) struct Equal;
 
 impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Broadcast {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
@@ -71,15 +75,39 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Summation {
         node: &Tensor<'a, T, D>,
     ) -> Vec<Tensor<'a, T, D>> {
         if self.1 || self.0.is_none() {
-            vec![out_grad.broadcast(&node.data().unwrap().shape())]
+            vec![out_grad.broadcast(&node.0.read().unwrap().inputs[0].shape())]
         } else {
-            let mut shape = node.data().unwrap().shape();
+            let ori_shape = node.0.read().unwrap().inputs[0].shape();
+            let mut shape = ori_shape.clone();
             for &axis in self.0.as_ref().unwrap() {
                 shape[axis] = 1;
             }
-            vec![out_grad
-                .reshape(shape)
-                .broadcast(&node.data().unwrap().shape())]
+            vec![out_grad.reshape(shape).broadcast(&ori_shape)]
+        }
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Max {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].max(self.0.clone(), self.1)
+    }
+
+    fn gradient(
+        &self,
+        out_grad: &Tensor<'a, T, D>,
+        node: &Tensor<'a, T, D>,
+    ) -> Vec<Tensor<'a, T, D>> {
+        if self.1 || self.0.is_none() {
+            vec![out_grad * &(node.equal(&node.0.read().unwrap().inputs[0]))]
+        } else {
+            let mut shape = node.0.read().unwrap().inputs[0].shape();
+            for &axis in self.0.as_ref().unwrap() {
+                shape[axis] = 1;
+            }
+            vec![
+                &out_grad.reshape(shape.clone())
+                    * &(node.reshape(shape).equal(&node.0.read().unwrap().inputs[0])),
+            ]
         }
     }
 }
@@ -94,7 +122,17 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Reshape {
         out_grad: &Tensor<'a, T, D>,
         node: &Tensor<'a, T, D>,
     ) -> Vec<Tensor<'a, T, D>> {
-        vec![out_grad.reshape(node.data().unwrap().shape())]
+        vec![out_grad.reshape(node.0.read().unwrap().inputs[0].shape())]
+    }
+}
+
+impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Equal {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        apply_with_broadcast(args, |lhs, rhs| lhs.equal(rhs))
+    }
+
+    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
+        vec![out_grad * T::zero()]
     }
 }
 
@@ -232,8 +270,12 @@ impl<'a, T: Float + 'a, D: Device> Operation<'a, T, D> for Ln {
         args[0].ln()
     }
 
-    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
-        vec![out_grad / &out_grad.0.read().unwrap().inputs[0]]
+    fn gradient(
+        &self,
+        out_grad: &Tensor<'a, T, D>,
+        node: &Tensor<'a, T, D>,
+    ) -> Vec<Tensor<'a, T, D>> {
+        vec![out_grad / &node.0.read().unwrap().inputs[0]]
     }
 }
 
@@ -257,7 +299,7 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Transpose {
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for MaxScalar<T> {
+impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for MaximumScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].max_scalar(self.0)
     }
@@ -277,10 +319,7 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for GTScalar<T> {
     }
 
     fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
-        vec![Tensor::zeros_like(
-            out_grad,
-            out_grad.0.read().unwrap().requires_grad,
-        )]
+        vec![out_grad * T::zero()]
     }
 }
 

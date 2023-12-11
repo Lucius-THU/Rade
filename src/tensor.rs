@@ -1,10 +1,10 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::operation::{
-    AddScalar, Broadcast, EWiseAdd, EWiseMul, EWisePow, GTScalar, Ln, Matmul, MaxScalar, MulScalar,
-    Operation, PowScalar, Reshape, ScalarPow, Summation, Transpose,
+    AddScalar, Broadcast, EWiseAdd, EWiseMul, EWisePow, Equal, GTScalar, Ln, Matmul, Max,
+    MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarPow, Summation, Transpose,
 };
-use crate::type_trait::{Float, Len, Type};
+use crate::type_trait::{Float, Len, Type, Unsigned};
 use lazy_static::lazy_static;
 use num_traits::{NumCast, One, Pow, Zero};
 use std::collections::{HashMap, HashSet};
@@ -28,6 +28,15 @@ pub(crate) struct Value<'a, T: Type, D: Device> {
 pub struct Tensor<'a, T: Type, D: Device>(pub(crate) Arc<RwLock<Value<'a, T, D>>>, usize);
 
 impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
+    pub fn new_with_shape(data: &[T], shape: &[usize], requires_grad: bool) -> Self {
+        Self::make(
+            Some(D::new(data.as_ptr() as *mut T, shape)),
+            vec![],
+            None,
+            requires_grad,
+        )
+    }
+
     pub fn new1d<A: Len<T>>(data: A, requires_grad: bool) -> Self {
         Self::make(
             Some(D::new(data.ptr(), &[data.len()])),
@@ -74,6 +83,19 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
         Self::make(Some(D::zeros(&self.shape())), vec![], None, requires_grad)
     }
 
+    pub fn one_hot<U: Unsigned>(
+        labels: &Tensor<'a, U, D>,
+        num_classes: usize,
+        requires_grad: bool,
+    ) -> Self {
+        Self::make(
+            Some(D::one_hot(&labels.realize_cached_data(), num_classes)),
+            vec![],
+            None,
+            requires_grad,
+        )
+    }
+
     pub fn rand(shape: &[usize], low: T, high: T, requires_grad: bool) -> Self {
         Self::make(Some(D::rand(shape, low, high)), vec![], None, requires_grad)
     }
@@ -99,8 +121,13 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
         tensor
     }
 
-    pub fn detach(&self) -> Self {
-        Self::make(Some(self.realize_cached_data()), vec![], None, false)
+    pub fn detach(&self, requires_grad: bool) -> Self {
+        Self::make(
+            Some(self.realize_cached_data()),
+            vec![],
+            None,
+            requires_grad,
+        )
     }
 
     pub fn shape(&self) -> Vec<usize> {
@@ -117,6 +144,14 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
 
     pub fn data(&self) -> Option<NDArray<T, D>> {
         self.0.read().unwrap().cached_data.clone()
+    }
+
+    pub fn set_data(&self, data: Tensor<'a, T, D>) {
+        self.0.write().unwrap().cached_data = Some(data.realize_cached_data());
+    }
+
+    pub fn underlying_data(&self) -> Vec<T> {
+        D::data(&self.realize_cached_data())
     }
 
     pub fn backward(&self) {
@@ -163,7 +198,7 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
     }
 
     pub fn relu(&self) -> Self {
-        Self::calc(MaxScalar(T::zero()), vec![self.clone()])
+        Self::calc(MaximumScalar(T::zero()), vec![self.clone()])
     }
 
     pub fn gt(&self, rhs: T) -> Self {
@@ -174,22 +209,34 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
         Self::calc(Matmul, vec![self.clone(), rhs.clone()])
     }
 
+    pub fn equal(&self, rhs: &Self) -> Self {
+        Self::calc(Equal, vec![self.clone(), rhs.clone()])
+    }
+
+    pub fn max(&self, axes: Option<Vec<usize>>, keep_dims: bool) -> Self {
+        Self::calc(Max(axes, keep_dims), vec![self.clone()])
+    }
+
     pub(crate) fn realize_cached_data(&self) -> NDArray<T, D> {
-        let mut value = self.0.write().unwrap();
-        if value.cached_data.is_none() {
-            if let Some(op) = &value.op {
-                value.cached_data = Some(
-                    op.compute(
-                        &value
-                            .inputs
-                            .iter()
-                            .map(|x| x.realize_cached_data())
-                            .collect::<Vec<_>>(),
-                    ),
-                );
-            } else {
-                panic!("No cached data and no op")
+        {
+            let value = self.0.read().unwrap();
+            if let Some(data) = &value.cached_data {
+                return data.clone();
             }
+        }
+        let mut value = self.0.write().unwrap();
+        if let Some(op) = &value.op {
+            value.cached_data = Some(
+                op.compute(
+                    &value
+                        .inputs
+                        .iter()
+                        .map(|x| x.realize_cached_data())
+                        .collect::<Vec<_>>(),
+                ),
+            );
+        } else {
+            panic!("No cached data and no op")
         }
         value.cached_data.clone().unwrap()
     }
@@ -199,7 +246,7 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
         let mut output = Self::make(None, args, Some(Box::new(op)), requires_grad);
         if !*LAZY_MODE {
             if !requires_grad {
-                output = output.detach();
+                output = output.detach(false);
             } else {
                 output.realize_cached_data();
             }
@@ -538,6 +585,13 @@ mod tests {
     fn test_relu() {
         let a = Tensor::<f32, CPU>::new2d([[1., -2., 3.], [-4., 5., -6.]], false);
         assert!(a.relu() == Tensor::new2d([[1., 0., 3.], [0., 5., 0.]], false));
+    }
+
+    #[test]
+    fn test_max() {
+        let a = Tensor::<f32, CPU>::new2d([[1., -2., 3.], [-4., 5., -6.]], false);
+        assert!(a.max(Some(vec![0]), false) == Tensor::new1d([1., 5., 3.], false));
+        assert!(a.max(Some(vec![1]), true) == Tensor::new2d([[3.], [5.]], false));
     }
 
     #[test]
