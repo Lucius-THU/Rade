@@ -157,9 +157,9 @@ impl<'a, T: Float, D: Device> Module<'a, T, D> for BatchNorm<'a, T, D> {
                 .sum(Some(vec![0]), false)
                 / batch;
             self.running_mean =
-                &(&e_x * self.momentum) + &(&self.running_mean * (T::one() - self.momentum));
+                (&(&e_x * self.momentum) + &(&self.running_mean * (T::one() - self.momentum))).detach(false);
             self.running_var =
-                &(&var_x * self.momentum) + &(&self.running_var * (T::one() - self.momentum));
+                (&(&var_x * self.momentum) + &(&self.running_var * (T::one() - self.momentum))).detach(false);
             &(&(&self.weight * &(input - &e_x)) / &(&var_x + self.eps).pow(T::from(0.5).unwrap()))
                 + &self.bias
         }

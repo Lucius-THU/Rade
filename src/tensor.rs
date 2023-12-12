@@ -150,6 +150,7 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
         self.0.write().unwrap().cached_data = Some(data.realize_cached_data());
     }
 
+    /// TODO: This function is not efficient and elegant.
     pub fn underlying_data(&self) -> Vec<T> {
         D::data(&self.realize_cached_data())
     }
@@ -161,23 +162,27 @@ impl<'a, T: Type, D: Device> Tensor<'a, T, D> {
         grads.insert(self.1, vec![Tensor::ones_like(self, true)]);
         topo_sort(self, &mut visited, &mut stack);
         for node in stack.iter().rev() {
-            node.0.write().unwrap().grad = grads[&node.1].iter().fold(None, |acc, x| {
+            let grad = grads[&node.1].iter().fold(None, |acc, x| {
                 if acc.is_none() {
                     Some(x.clone())
                 } else {
                     Some(&acc.unwrap() + x)
                 }
             });
-            let value = node.0.read().unwrap();
-            if let Some(op) = &value.op {
-                let in_grads = op.gradient(&node.0.read().unwrap().grad.as_ref().unwrap(), &node);
-                for (i, input) in value.inputs.iter().enumerate() {
-                    grads
-                        .entry(input.1)
-                        .or_insert_with(|| vec![])
-                        .push(in_grads[i].clone());
+            {
+                let value = node.0.read().unwrap();
+                if let Some(op) = &value.op {
+                    let in_grads = op.gradient(grad.as_ref().unwrap(), &node);
+                    for (i, input) in value.inputs.iter().enumerate() {
+                        grads
+                            .entry(input.1)
+                            .or_insert_with(|| vec![])
+                            .push(in_grads[i].clone());
+                    }
+                    continue;
                 }
             }
+            node.0.write().unwrap().grad = grad;
         }
     }
 
