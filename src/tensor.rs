@@ -5,6 +5,10 @@ use crate::operation::{
     MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarPow, Summation, Transpose,
 };
 use crate::type_trait::{Float, Len, Type, Unsigned};
+use bincode::de::Decoder;
+use bincode::enc::Encoder;
+use bincode::error::{DecodeError, EncodeError};
+use bincode::{Decode, Encode};
 use num_traits::{NumCast, One, Pow, Zero};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Div, Mul, Neg, Sub};
@@ -98,7 +102,7 @@ impl<T: Type, D: Device> Tensor<T, D> {
     pub(crate) fn make(
         cached_data: Option<NDArray<T, D>>,
         inputs: Vec<Tensor<T, D>>,
-        op: Option<Box<dyn Operation<T, D> >>,
+        op: Option<Box<dyn Operation<T, D>>>,
         requires_grad: bool,
     ) -> Self {
         Self(
@@ -275,7 +279,7 @@ impl<T: Type, D: Device> Add for &Tensor<T, D> {
     }
 }
 
-impl<T: Type , D: Device> Add<T> for &Tensor<T, D> {
+impl<T: Type, D: Device> Add<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn add(self, rhs: T) -> Self::Output {
@@ -291,7 +295,7 @@ impl<T: Type, D: Device> Mul for &Tensor<T, D> {
     }
 }
 
-impl<T: Type , D: Device> Mul<T> for &Tensor<T, D> {
+impl<T: Type, D: Device> Mul<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn mul(self, rhs: T) -> Self::Output {
@@ -307,7 +311,7 @@ impl<T: Type, D: Device> Sub for &Tensor<T, D> {
     }
 }
 
-impl<T: Type , D: Device> Sub<T> for &Tensor<T, D> {
+impl<T: Type, D: Device> Sub<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn sub(self, rhs: T) -> Self::Output {
@@ -315,7 +319,7 @@ impl<T: Type , D: Device> Sub<T> for &Tensor<T, D> {
     }
 }
 
-impl<T: Float , D: Device> Div for &Tensor<T, D> {
+impl<T: Float, D: Device> Div for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -323,7 +327,7 @@ impl<T: Float , D: Device> Div for &Tensor<T, D> {
     }
 }
 
-impl<T: Type , D: Device> Div<T> for &Tensor<T, D> {
+impl<T: Type, D: Device> Div<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn div(self, rhs: T) -> Self::Output {
@@ -331,7 +335,7 @@ impl<T: Type , D: Device> Div<T> for &Tensor<T, D> {
     }
 }
 
-impl<T: Type , D: Device> Neg for &Tensor<T, D> {
+impl<T: Type, D: Device> Neg for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn neg(self) -> Self::Output {
@@ -339,13 +343,13 @@ impl<T: Type , D: Device> Neg for &Tensor<T, D> {
     }
 }
 
-impl<T: Type , D: Device> PartialEq for Tensor<T, D> {
+impl<T: Type, D: Device> PartialEq for Tensor<T, D> {
     fn eq(&self, other: &Self) -> bool {
         self.realize_cached_data() == other.realize_cached_data()
     }
 }
 
-impl<T: Float , D: Device> Pow<&Tensor<T, D>> for &Tensor<T, D> {
+impl<T: Float, D: Device> Pow<&Tensor<T, D>> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn pow(self, rhs: &Tensor<T, D>) -> Self::Output {
@@ -353,7 +357,7 @@ impl<T: Float , D: Device> Pow<&Tensor<T, D>> for &Tensor<T, D> {
     }
 }
 
-impl<T: Float , D: Device> Pow<T> for &Tensor<T, D> {
+impl<T: Float, D: Device> Pow<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn pow(self, rhs: T) -> Self::Output {
@@ -459,6 +463,37 @@ impl_add!(isize, i8, i16, i32, i64, i128, f32, f64);
 impl_mul!(isize, i8, i16, i32, i64, i128, f32, f64);
 
 impl_sub!(isize, i8, i16, i32, i64, i128, f32, f64);
+
+impl<T: Type, D: Device> Encode for Tensor<T, D> {
+    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+        if self.0.read().unwrap().inputs.len() > 0 {
+            Err(EncodeError::Other("Tensors with inputs can't be encoded."))
+        } else {
+            let data = self.data();
+            if data.is_none() {
+                Err(EncodeError::Other(
+                    "Tensors without underlying data can't be encoded.",
+                ))
+            } else {
+                let mut value = data.as_ref().unwrap();
+                let new_value;
+                if !value.is_contiguous() {
+                    new_value = value.contiguous();
+                    value = &new_value;
+                }
+                D::encode(encoder, value)?;
+                Ok(())
+            }
+        }
+    }
+}
+
+impl<T: Type, D: Device> Decode for Tensor<T, D> {
+    fn decode<U: Decoder>(decoder: &mut U) -> Result<Self, DecodeError> {
+        let data = D::decode(decoder)?;
+        Ok(Self::make(Some(data), vec![], None, true))
+    }
+}
 
 fn topo_sort<T: Type, D: Device>(
     node: &Tensor<T, D>,

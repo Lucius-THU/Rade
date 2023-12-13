@@ -2,15 +2,15 @@ use crate::device::Device;
 use crate::ndarray::{self, Idx, NDArray, Storage};
 use crate::tensor::Tensor;
 use crate::type_trait::{Type, Unsigned};
+use bincode::de::Decoder;
+use bincode::enc::Encoder;
+use bincode::error::{DecodeError, EncodeError};
+use bincode::{Decode, Encode};
 use num_traits::{Float, Pow};
 use rand::distributions::{Distribution, Uniform};
 use std::fmt::{self, Display, Formatter};
 use std::ops::Index;
 use std::slice;
-use bincode::enc::Encoder;
-use bincode::{Decode, Encode};
-use bincode::de::Decoder;
-use bincode::error::{DecodeError, EncodeError};
 
 #[derive(Clone)]
 pub struct CPU;
@@ -382,6 +382,28 @@ impl Device for CPU {
             panic!("Tensor Storage mismatched with Device")
         }
     }
+
+    fn encode<T: Type, E: Encoder>(
+        encoder: &mut E,
+        lhs: &NDArray<T, Self>,
+    ) -> Result<(), EncodeError> {
+        if let Storage::CPU(data) = &lhs.0.data.as_ref() {
+            Encode::encode(data, encoder)?;
+            Encode::encode(&lhs.0.shape, encoder)?;
+            Ok(())
+        } else {
+            Err(EncodeError::Other(
+                "Storage type does not compatible with CPU.",
+            ))
+        }
+    }
+
+    fn decode<T: Type, D: Decoder>(decoder: &mut D) -> Result<NDArray<T, Self>, DecodeError> {
+        let data = Decode::decode(decoder)?;
+        let shape: Vec<usize> = Decode::decode(decoder)?;
+        let strides = ndarray::compact_strides(&shape);
+        Ok(NDArray::make(Storage::CPU(data), shape, strides, 0, Self))
+    }
 }
 
 impl<T: Type> Index<&Idx> for NDArray<T, CPU> {
@@ -429,60 +451,5 @@ impl<T: Type> Display for Tensor<T, CPU> {
             ending = format!("{}]", ending);
         }
         write!(f, "{ending})")
-    }
-}
-
-impl<T: Type> Encode for NDArray<T, CPU> {
-    fn encode<E: Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> Result<(), EncodeError> {
-        if let Storage::CPU(data) = self.0.data.as_ref() {
-            Encode::encode(data, encoder)?;
-            Encode::encode(&self.0.shape, encoder)?;
-            Ok(())
-        } else {
-            Err(EncodeError::Other("Storage type does not compatible with CPU."))
-        }
-    }
-}
-
-impl<T: Type> Encode for Tensor<T, CPU> {
-    fn encode<E: Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> Result<(), EncodeError> {
-        if self.0.read().unwrap().inputs.len() > 0 {
-            Err(EncodeError::Other("Tensors with inputs can't be encoded."))
-        } else {
-            let data = self.data();
-            if data.is_none() {
-                Err(EncodeError::Other("Tensors without underlying data can't be encoded."))
-            } else {
-                let value = data.as_ref().unwrap();
-                if !value.is_contiguous() {
-                    Err(EncodeError::Other("Encode is only supported for contiguous Tensors."))
-                } else {
-                    Encode::encode(value, encoder)?;
-                    Ok(())
-                }
-            }
-        }
-    }
-}
-
-impl<T: Type> Decode for Tensor<T, CPU> {
-    fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let data = Decode::decode(decoder)?;
-        Ok(Self::make(Some(data), vec![], None, true))
-    }
-}
-
-impl<T: Type> Decode for NDArray<T, CPU> {
-    fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let data = Decode::decode(decoder)?;
-        let shape: Vec<usize> = Decode::decode(decoder)?;
-        let strides = ndarray::compact_strides(&shape);
-        Ok(Self::make(Storage::CPU(data), shape, strides, 0, CPU))
     }
 }

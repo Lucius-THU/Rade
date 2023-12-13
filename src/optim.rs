@@ -1,7 +1,7 @@
-use num_traits::Pow;
 use crate::device::Device;
 use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type};
+use num_traits::Pow;
 
 pub trait Optimizer<T: Type, D: Device> {
     fn parameters(&self) -> &[Tensor<T, D>];
@@ -34,12 +34,7 @@ pub struct Adam<T: Float, D: Device> {
 }
 
 impl<T: Type, D: Device> SGD<T, D> {
-    pub fn new(
-        parameters: Vec<Tensor<T, D>>,
-        lr: T,
-        momentum: T,
-        weight_decay: T,
-    ) -> Self {
+    pub fn new(parameters: Vec<Tensor<T, D>>, lr: T, momentum: T, weight_decay: T) -> Self {
         let len = parameters.len();
         Self {
             parameters,
@@ -58,7 +53,9 @@ impl<T: Type, D: Device> Optimizer<T, D> for SGD<T, D> {
 
     fn step(&mut self) {
         for (i, parameter) in self.parameters.iter().enumerate() {
-            let grad = (&(&parameter.grad().unwrap() + &(parameter * self.weight_decay)) * (T::one() - self.momentum)).detach(false);
+            let grad = (&(&parameter.grad().unwrap() + &(parameter * self.weight_decay))
+                * (T::one() - self.momentum))
+                .detach(false);
             if self.u.len() <= i {
                 self.u.push(grad);
             } else {
@@ -101,17 +98,25 @@ impl<'a, T: Float, D: Device> Optimizer<T, D> for Adam<T, D> {
     fn step(&mut self) {
         self.t += 1;
         for (i, parameter) in self.parameters.iter().enumerate() {
-            let grad = (&parameter.grad().unwrap() + &(parameter * self.weight_decay)).detach(false);
+            let grad =
+                (&parameter.grad().unwrap() + &(parameter * self.weight_decay)).detach(false);
             if self.u.len() <= i {
                 self.u.push((&grad * (T::one() - self.beta1)).detach(false));
-                self.v.push((&(grad.pow(T::from(2).unwrap())) * (T::one() - self.beta2)).detach(false));
+                self.v.push(
+                    (&(grad.pow(T::from(2).unwrap())) * (T::one() - self.beta2)).detach(false),
+                );
             } else {
-                self.u[i] = (&(&self.u[i] * self.beta1) + &(&grad * (T::one() - self.beta1))).detach(false);
-                self.v[i] = (&(&self.v[i] * self.beta2) + &(&grad.pow(T::from(2).unwrap()) * (T::one() - self.beta2))).detach(false);
+                self.u[i] =
+                    (&(&self.u[i] * self.beta1) + &(&grad * (T::one() - self.beta1))).detach(false);
+                self.v[i] = (&(&self.v[i] * self.beta2)
+                    + &(&grad.pow(T::from(2).unwrap()) * (T::one() - self.beta2)))
+                    .detach(false);
             }
             let u = &self.u[i] / (T::one() - self.beta1.pow(T::from(self.t).unwrap()));
             let v = &self.v[i] / (T::one() - self.beta2.pow(T::from(self.t).unwrap()));
-            parameter.set_data(parameter - &(&(&u * self.lr) / &(&v.pow(T::from(0.5).unwrap()) + self.eps)));
+            parameter.set_data(
+                parameter - &(&(&u * self.lr) / &(&v.pow(T::from(0.5).unwrap()) + self.eps)),
+            );
         }
     }
 }

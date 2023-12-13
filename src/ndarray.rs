@@ -145,7 +145,7 @@ impl<T: Type, D: Device> NDArray<T, D> {
         self.0.strides == compact_strides(&self.0.shape)
     }
 
-    fn contiguous(&self) -> Self {
+    pub fn contiguous(&self) -> Self {
         self.0.device.contiguous(self)
     }
 }

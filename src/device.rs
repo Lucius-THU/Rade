@@ -1,5 +1,8 @@
 use crate::ndarray::NDArray;
 use crate::type_trait::{Type, Unsigned};
+use bincode::de::Decoder;
+use bincode::enc::Encoder;
+use bincode::error::{DecodeError, EncodeError};
 use num_traits::{Float, Pow};
 
 pub trait Device: Clone {
@@ -71,4 +74,11 @@ pub trait Device: Clone {
     fn contiguous<T: Type>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>;
 
     fn data<T: Type>(lhs: &NDArray<T, Self>) -> Vec<T>;
+
+    fn encode<T: Type, E: Encoder>(
+        encoder: &mut E,
+        lhs: &NDArray<T, Self>,
+    ) -> Result<(), EncodeError>;
+
+    fn decode<T: Type, D: Decoder>(decoder: &mut D) -> Result<NDArray<T, Self>, DecodeError>;
 }

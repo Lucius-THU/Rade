@@ -9,11 +9,7 @@ pub(crate) trait Operation<T: Type, D: Device> {
 
     /// Reversed automatic differentiation implementation.
     /// **Warning**: This function can't get the `RwLockWriteGuard` of `node`!
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>>;
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>>;
 }
 
 pub(crate) struct Broadcast(pub Vec<usize>);
@@ -55,11 +51,7 @@ impl<T: Type, D: Device> Operation<T, D> for Broadcast {
         args[0].broadcast(&self.0)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![reduce_by_add(out_grad, &node.data().unwrap().shape())]
     }
 }
@@ -69,11 +61,7 @@ impl<T: Type, D: Device> Operation<T, D> for Summation {
         args[0].sum(self.0.clone(), self.1)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         if self.1 || self.0.is_none() {
             vec![out_grad.broadcast(&node.0.read().unwrap().inputs[0].shape())]
         } else {
@@ -92,11 +80,7 @@ impl<T: Type, D: Device> Operation<T, D> for Max {
         args[0].max(self.0.clone(), self.1)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         if self.1 || self.0.is_none() {
             vec![out_grad * &(node.equal(&node.0.read().unwrap().inputs[0]))]
         } else {
@@ -117,11 +101,7 @@ impl<T: Type, D: Device> Operation<T, D> for Reshape {
         args[0].reshape(&self.0)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad.reshape(node.0.read().unwrap().inputs[0].shape())]
     }
 }
@@ -141,11 +121,7 @@ impl<T: Type, D: Device> Operation<T, D> for EWiseAdd {
         apply_with_broadcast(args, |lhs, rhs| lhs + rhs)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
         let in_grads = vec![out_grad.clone(), out_grad.clone()];
         reduce_to_shape(in_grads, inputs)
@@ -167,11 +143,7 @@ impl<T: Type, D: Device> Operation<T, D> for EWiseMul {
         apply_with_broadcast(args, |lhs, rhs| lhs * rhs)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
         let in_grads = vec![out_grad * &inputs[1], out_grad * &inputs[0]];
         reduce_to_shape(in_grads, inputs)
@@ -193,11 +165,7 @@ impl<T: Float, D: Device> Operation<T, D> for EWisePow {
         apply_with_broadcast(args, |lhs, rhs| lhs.pow(rhs))
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
         let in_grads = vec![
             &(out_grad * &inputs[1]) * &inputs[0].pow(&(&inputs[1] - T::one())),
@@ -212,11 +180,7 @@ impl<D: Device, T: Float> Operation<T, D> for ScalarPow<T> {
         args[0].scalar_pow(self.0)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         let input = &node.0.read().unwrap().inputs[0];
         vec![&(out_grad * &self.0.powt(input)) * self.0.ln()]
     }
@@ -227,11 +191,7 @@ impl<T: Float, D: Device> Operation<T, D> for PowScalar<T> {
         args[0].pow(self.0)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         let input = &node.0.read().unwrap().inputs[0];
         vec![&(out_grad * self.0) * &input.pow(self.0 - T::one())]
     }
@@ -270,11 +230,7 @@ impl<T: Float, D: Device> Operation<T, D> for Ln {
         args[0].ln()
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad / &node.0.read().unwrap().inputs[0]]
     }
 }
@@ -304,11 +260,7 @@ impl<T: Type, D: Device> Operation<T, D> for MaximumScalar<T> {
         args[0].max_scalar(self.0)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad * &node.gt(self.0)]
     }
 }
@@ -360,11 +312,7 @@ impl<T: Type, D: Device> Operation<T, D> for Matmul {
         lhs.matmul(rhs)
     }
 
-    fn gradient(
-        &self,
-        out_grad: &Tensor<T, D>,
-        node: &Tensor<T, D>,
-    ) -> Vec<Tensor<T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
         let in_grads = vec![
             out_grad.matmul(&inputs[1].transpose(None)),
@@ -409,10 +357,7 @@ fn reduce_to_shape<T: Type, D: Device>(
     grads
 }
 
-fn reduce_by_add<T: Type, D: Device>(
-    input: &Tensor<T, D>,
-    output_shape: &[usize],
-) -> Tensor<T, D> {
+fn reduce_by_add<T: Type, D: Device>(input: &Tensor<T, D>, output_shape: &[usize]) -> Tensor<T, D> {
     let input_shape = input.shape();
     let n = input_shape.len() - output_shape.len();
     let sum = input.sum(Some((0..n).collect::<Vec<_>>()), false);

@@ -6,9 +6,9 @@ pub mod functional;
 mod ndarray;
 pub mod nn;
 mod operation;
+pub mod optim;
 pub mod tensor;
 mod type_trait;
-pub mod optim;
 
 static LAZY_MODE: AtomicBool = AtomicBool::new(false);
 

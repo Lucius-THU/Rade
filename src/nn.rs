@@ -1,13 +1,55 @@
 use crate::device::Device;
 use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type};
+use bincode::config;
+use bincode::error::{DecodeError, EncodeError};
 use num_traits::Pow;
+use std::{fs, path::Path};
 
 pub trait Module<T: Type, D: Device> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D>;
     fn parameters(&self) -> Vec<Tensor<T, D>>;
+    fn state_dict(&self) -> Vec<Tensor<T, D>>;
     fn train(&mut self) {}
     fn eval(&mut self) {}
+
+    fn save(&self, path: &str) -> Result<(), EncodeError> {
+        let msg = "File cannot be created.";
+        if let Some(p) = Path::new(path).parent() {
+            if let Err(_) = fs::create_dir_all(p) {
+                Err(EncodeError::Other(msg))
+            } else {
+                if let Ok(mut file) = fs::File::create(path) {
+                    for parameter in self.state_dict() {
+                        bincode::encode_into_std_write(parameter, &mut file, config::standard())?;
+                    }
+                    Ok(())
+                } else {
+                    Err(EncodeError::Other(msg))
+                }
+            }
+        } else {
+            Err(EncodeError::OtherString(format!(
+                "{} is not a valid path.",
+                path
+            )))
+        }
+    }
+
+    fn load(&mut self, path: &str) -> Result<(), DecodeError> {
+        if let Ok(mut file) = fs::File::open(path) {
+            for parameter in self.state_dict() {
+                parameter.set_data(bincode::decode_from_std_read(
+                    &mut file,
+                    config::standard(),
+                )?);
+            }
+            self.eval();
+            Ok(())
+        } else {
+            Err(DecodeError::Other("File not found."))
+        }
+    }
 }
 
 pub struct Linear<T: Float, D: Device> {
@@ -68,6 +110,10 @@ impl<T: Float, D: Device> Module<T, D> for Linear<T, D> {
         }
         parameters
     }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        self.parameters()
+    }
 }
 
 impl<T: Type, D: Device> Module<T, D> for ReLU {
@@ -76,6 +122,10 @@ impl<T: Type, D: Device> Module<T, D> for ReLU {
     }
 
     fn parameters(&self) -> Vec<Tensor<T, D>> {
+        vec![]
+    }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
         vec![]
     }
 }
@@ -99,6 +149,14 @@ impl<T: Type, D: Device> Module<T, D> for Sequential<T, D> {
         let mut parameters = Vec::new();
         for module in &self.0 {
             parameters.extend(module.parameters());
+        }
+        parameters
+    }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        let mut parameters = Vec::new();
+        for module in &self.0 {
+            parameters.extend(module.state_dict());
         }
         parameters
     }
@@ -158,6 +216,15 @@ impl<T: Float, D: Device> Module<T, D> for BatchNorm<T, D> {
         vec![self.weight.clone(), self.bias.clone()]
     }
 
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        vec![
+            self.weight.clone(),
+            self.bias.clone(),
+            self.running_mean.clone(),
+            self.running_var.clone(),
+        ]
+    }
+
     fn train(&mut self) {
         self.training = true;
     }
@@ -187,6 +254,10 @@ impl<T: Float, D: Device> Module<T, D> for Dropout<T> {
         vec![]
     }
 
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        vec![]
+    }
+
     fn train(&mut self) {
         self.training = true;
     }
@@ -208,6 +279,10 @@ impl<T: Type, D: Device> Module<T, D> for Residual<T, D> {
     }
 
     fn parameters(&self) -> Vec<Tensor<T, D>> {
+        vec![]
+    }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
         vec![]
     }
 

@@ -1,12 +1,14 @@
 use crate::device::Device;
 use crate::tensor::Tensor;
+use bincode::{Decode, Encode};
 use num_traits::{Num, Pow, ToPrimitive};
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
 use std::ops::{Add, Index};
-use bincode::{Decode, Encode};
 
-pub trait Type: 'static + Encode + Decode + Num + SampleUniform + Copy + Display + PartialOrd + Add<Output = Self> {
+pub trait Type:
+    'static + Encode + Decode + Num + SampleUniform + Copy + Display + PartialOrd + Add<Output = Self>
+{
     fn atol() -> Self {
         Self::zero()
     }
