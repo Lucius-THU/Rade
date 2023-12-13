@@ -4,8 +4,9 @@ use num_traits::{Num, Pow, ToPrimitive};
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
 use std::ops::{Add, Index};
+use bincode::{Decode, Encode};
 
-pub trait Type: Num + SampleUniform + Copy + Display + PartialOrd + Add<Output = Self> {
+pub trait Type: 'static + Encode + Decode + Num + SampleUniform + Copy + Display + PartialOrd + Add<Output = Self> {
     fn atol() -> Self {
         Self::zero()
     }
@@ -68,7 +69,7 @@ impl_len!(
 );
 
 pub trait Float: Type + num_traits::Float + Pow<Self, Output = Self> {
-    fn powt<'a, D: Device>(self, rhs: &Tensor<'a, Self, D>) -> Tensor<'a, Self, D>;
+    fn powt<D: Device>(self, rhs: &Tensor<Self, D>) -> Tensor<Self, D>;
 }
 
 pub trait Unsigned: Type + num_traits::Unsigned + ToPrimitive {}

@@ -3,40 +3,27 @@ use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type};
 use num_traits::Pow;
 
-pub trait Module<'a, T: Type + 'a, D: Device> {
-    fn forward(&mut self, input: &Tensor<'a, T, D>) -> Tensor<'a, T, D>;
-    fn parameters(&self) -> Vec<&Tensor<'a, T, D>>;
+pub trait Module<T: Type, D: Device> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D>;
+    fn parameters(&self) -> Vec<Tensor<T, D>>;
     fn train(&mut self) {}
-
     fn eval(&mut self) {}
-
-    fn zero_grad(&mut self) {
-        for parameter in self.parameters() {
-            parameter.zero_grad();
-        }
-    }
-
-    fn step(&mut self, lr: T) {
-        for parameter in self.parameters() {
-            parameter.set_data(parameter - &(&parameter.grad().unwrap() * lr));
-        }
-    }
 }
 
-pub struct Linear<'a, T: Float, D: Device> {
-    weight: Tensor<'a, T, D>,
-    bias: Option<Tensor<'a, T, D>>,
+pub struct Linear<T: Float, D: Device> {
+    weight: Tensor<T, D>,
+    bias: Option<Tensor<T, D>>,
 }
 
 pub struct ReLU;
 
-pub struct Sequential<'a, T: Type, D: Device>(Vec<Box<dyn Module<'a, T, D> + 'a>>);
+pub struct Sequential<T: Type, D: Device>(Vec<Box<dyn Module<T, D>>>);
 
-pub struct BatchNorm<'a, T: Float, D: Device> {
-    weight: Tensor<'a, T, D>,
-    bias: Tensor<'a, T, D>,
-    running_mean: Tensor<'a, T, D>,
-    running_var: Tensor<'a, T, D>,
+pub struct BatchNorm<T: Float, D: Device> {
+    weight: Tensor<T, D>,
+    bias: Tensor<T, D>,
+    running_mean: Tensor<T, D>,
+    running_var: Tensor<T, D>,
     eps: T,
     momentum: T,
     training: bool,
@@ -47,9 +34,9 @@ pub struct Dropout<T: Float> {
     training: bool,
 }
 
-pub struct Residual<'a, T: Type, D: Device>(Box<dyn Module<'a, T, D> + 'a>);
+pub struct Residual<T: Type, D: Device>(Box<dyn Module<T, D>>);
 
-impl<'a, T: Float, D: Device> Linear<'a, T, D> {
+impl<T: Float, D: Device> Linear<T, D> {
     pub fn new(in_features: usize, out_features: usize, bias: bool) -> Self {
         let weight = Tensor::kaiming_uniform(in_features, out_features, true);
         let bias = if bias {
@@ -65,8 +52,8 @@ impl<'a, T: Float, D: Device> Linear<'a, T, D> {
     }
 }
 
-impl<'a, T: Float, D: Device> Module<'a, T, D> for Linear<'a, T, D> {
-    fn forward(&mut self, input: &Tensor<'a, T, D>) -> Tensor<'a, T, D> {
+impl<T: Float, D: Device> Module<T, D> for Linear<T, D> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         let mut output = input.matmul(&self.weight);
         if let Some(bias) = &self.bias {
             output = &output + bias;
@@ -74,33 +61,33 @@ impl<'a, T: Float, D: Device> Module<'a, T, D> for Linear<'a, T, D> {
         output
     }
 
-    fn parameters(&self) -> Vec<&Tensor<'a, T, D>> {
-        let mut parameters = vec![&self.weight];
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
+        let mut parameters = vec![self.weight.clone()];
         if let Some(bias) = &self.bias {
-            parameters.push(bias);
+            parameters.push(bias.clone());
         }
         parameters
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Module<'a, T, D> for ReLU {
-    fn forward(&mut self, input: &Tensor<'a, T, D>) -> Tensor<'a, T, D> {
+impl<T: Type, D: Device> Module<T, D> for ReLU {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         input.relu()
     }
 
-    fn parameters(&self) -> Vec<&Tensor<'a, T, D>> {
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
         vec![]
     }
 }
 
-impl<'a, T: Type, D: Device> Sequential<'a, T, D> {
-    pub fn new(modules: Vec<Box<dyn Module<'a, T, D> + 'a>>) -> Self {
+impl<T: Type, D: Device> Sequential<T, D> {
+    pub fn new(modules: Vec<Box<dyn Module<T, D>>>) -> Self {
         Self(modules)
     }
 }
 
-impl<'a, T: Type, D: Device> Module<'a, T, D> for Sequential<'a, T, D> {
-    fn forward(&mut self, input: &Tensor<'a, T, D>) -> Tensor<'a, T, D> {
+impl<T: Type, D: Device> Module<T, D> for Sequential<T, D> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         let mut output = input.clone();
         for module in &mut self.0 {
             output = module.forward(&output);
@@ -108,7 +95,7 @@ impl<'a, T: Type, D: Device> Module<'a, T, D> for Sequential<'a, T, D> {
         output
     }
 
-    fn parameters(&self) -> Vec<&Tensor<'a, T, D>> {
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
         let mut parameters = Vec::new();
         for module in &self.0 {
             parameters.extend(module.parameters());
@@ -129,7 +116,7 @@ impl<'a, T: Type, D: Device> Module<'a, T, D> for Sequential<'a, T, D> {
     }
 }
 
-impl<'a, T: Float, D: Device> BatchNorm<'a, T, D> {
+impl<T: Float, D: Device> BatchNorm<T, D> {
     pub fn new(dim: usize, eps: T, momentum: T) -> Self {
         BatchNorm {
             weight: Tensor::ones(&[dim], true),
@@ -143,8 +130,8 @@ impl<'a, T: Float, D: Device> BatchNorm<'a, T, D> {
     }
 }
 
-impl<'a, T: Float, D: Device> Module<'a, T, D> for BatchNorm<'a, T, D> {
-    fn forward(&mut self, input: &Tensor<'a, T, D>) -> Tensor<'a, T, D> {
+impl<T: Float, D: Device> Module<T, D> for BatchNorm<T, D> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         if !self.training {
             &(&(&self.weight * &(input - &self.running_mean))
                 / &(&self.running_var + self.eps).pow(T::from(0.5).unwrap()))
@@ -156,17 +143,19 @@ impl<'a, T: Float, D: Device> Module<'a, T, D> for BatchNorm<'a, T, D> {
                 .pow(T::from(2).unwrap())
                 .sum(Some(vec![0]), false)
                 / batch;
-            self.running_mean =
-                (&(&e_x * self.momentum) + &(&self.running_mean * (T::one() - self.momentum))).detach(false);
-            self.running_var =
-                (&(&var_x * self.momentum) + &(&self.running_var * (T::one() - self.momentum))).detach(false);
+            self.running_mean = (&(&e_x * self.momentum)
+                + &(&self.running_mean * (T::one() - self.momentum)))
+                .detach(false);
+            self.running_var = (&(&var_x * self.momentum)
+                + &(&self.running_var * (T::one() - self.momentum)))
+                .detach(false);
             &(&(&self.weight * &(input - &e_x)) / &(&var_x + self.eps).pow(T::from(0.5).unwrap()))
                 + &self.bias
         }
     }
 
-    fn parameters(&self) -> Vec<&Tensor<'a, T, D>> {
-        vec![&self.weight, &self.bias]
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
+        vec![self.weight.clone(), self.bias.clone()]
     }
 
     fn train(&mut self) {
@@ -184,8 +173,8 @@ impl<T: Float> Dropout<T> {
     }
 }
 
-impl<'a, T: Float + 'a, D: Device> Module<'a, T, D> for Dropout<T> {
-    fn forward(&mut self, input: &Tensor<'a, T, D>) -> Tensor<'a, T, D> {
+impl<T: Float, D: Device> Module<T, D> for Dropout<T> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         if !self.training {
             input.clone()
         } else {
@@ -194,7 +183,7 @@ impl<'a, T: Float + 'a, D: Device> Module<'a, T, D> for Dropout<T> {
         }
     }
 
-    fn parameters(&self) -> Vec<&Tensor<'a, T, D>> {
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
         vec![]
     }
 
@@ -207,18 +196,18 @@ impl<'a, T: Float + 'a, D: Device> Module<'a, T, D> for Dropout<T> {
     }
 }
 
-impl<'a, T: Type, D: Device> Residual<'a, T, D> {
-    pub fn new(module: Box<dyn Module<'a, T, D> + 'a>) -> Self {
+impl<T: Type, D: Device> Residual<T, D> {
+    pub fn new(module: Box<dyn Module<T, D>>) -> Self {
         Self(module)
     }
 }
 
-impl<'a, T: Type, D: Device> Module<'a, T, D> for Residual<'a, T, D> {
-    fn forward(&mut self, input: &Tensor<'a, T, D>) -> Tensor<'a, T, D> {
+impl<T: Type, D: Device> Module<T, D> for Residual<T, D> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         input + &self.0.forward(input)
     }
 
-    fn parameters(&self) -> Vec<&Tensor<'a, T, D>> {
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
         vec![]
     }
 

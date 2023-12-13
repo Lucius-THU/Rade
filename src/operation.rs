@@ -4,16 +4,16 @@ use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type};
 use num_traits::{One, Pow};
 
-pub(crate) trait Operation<'a, T: Type + 'a, D: Device> {
+pub(crate) trait Operation<T: Type, D: Device> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D>;
 
     /// Reversed automatic differentiation implementation.
     /// **Warning**: This function can't get the `RwLockWriteGuard` of `node`!
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>>;
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>>;
 }
 
 pub(crate) struct Broadcast(pub Vec<usize>);
@@ -50,30 +50,30 @@ pub(crate) struct Max(pub Option<Vec<usize>>, pub bool);
 
 pub(crate) struct Equal;
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Broadcast {
+impl<T: Type, D: Device> Operation<T, D> for Broadcast {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].broadcast(&self.0)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         vec![reduce_by_add(out_grad, &node.data().unwrap().shape())]
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Summation {
+impl<T: Type, D: Device> Operation<T, D> for Summation {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].sum(self.0.clone(), self.1)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         if self.1 || self.0.is_none() {
             vec![out_grad.broadcast(&node.0.read().unwrap().inputs[0].shape())]
         } else {
@@ -87,16 +87,16 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Summation {
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Max {
+impl<T: Type, D: Device> Operation<T, D> for Max {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].max(self.0.clone(), self.1)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         if self.1 || self.0.is_none() {
             vec![out_grad * &(node.equal(&node.0.read().unwrap().inputs[0]))]
         } else {
@@ -112,92 +112,92 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Max {
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Reshape {
+impl<T: Type, D: Device> Operation<T, D> for Reshape {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].reshape(&self.0)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         vec![out_grad.reshape(node.0.read().unwrap().inputs[0].shape())]
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Equal {
+impl<T: Type, D: Device> Operation<T, D> for Equal {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs.equal(rhs))
     }
 
-    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad * T::zero()]
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for EWiseAdd {
+impl<T: Type, D: Device> Operation<T, D> for EWiseAdd {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs + rhs)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
         let in_grads = vec![out_grad.clone(), out_grad.clone()];
         reduce_to_shape(in_grads, inputs)
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for AddScalar<T> {
+impl<T: Type, D: Device> Operation<T, D> for AddScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         &args[0] + self.0
     }
 
-    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad.clone()]
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for EWiseMul {
+impl<T: Type, D: Device> Operation<T, D> for EWiseMul {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs * rhs)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
         let in_grads = vec![out_grad * &inputs[1], out_grad * &inputs[0]];
         reduce_to_shape(in_grads, inputs)
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for MulScalar<T> {
+impl<T: Type, D: Device> Operation<T, D> for MulScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         &args[0] * self.0
     }
 
-    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad * self.0]
     }
 }
 
-impl<'a, T: Float + 'a, D: Device> Operation<'a, T, D> for EWisePow {
+impl<T: Float, D: Device> Operation<T, D> for EWisePow {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs.pow(rhs))
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
         let in_grads = vec![
             &(out_grad * &inputs[1]) * &inputs[0].pow(&(&inputs[1] - T::one())),
@@ -207,31 +207,31 @@ impl<'a, T: Float + 'a, D: Device> Operation<'a, T, D> for EWisePow {
     }
 }
 
-impl<'a, D: Device, T: Float + 'a> Operation<'a, T, D> for ScalarPow<T> {
+impl<D: Device, T: Float> Operation<T, D> for ScalarPow<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].scalar_pow(self.0)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         let input = &node.0.read().unwrap().inputs[0];
         vec![&(out_grad * &self.0.powt(input)) * self.0.ln()]
     }
 }
 
-impl<'a, T: Float + 'a, D: Device> Operation<'a, T, D> for PowScalar<T> {
+impl<T: Float, D: Device> Operation<T, D> for PowScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].pow(self.0)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         let input = &node.0.read().unwrap().inputs[0];
         vec![&(out_grad * self.0) * &input.pow(self.0 - T::one())]
     }
@@ -239,16 +239,16 @@ impl<'a, T: Float + 'a, D: Device> Operation<'a, T, D> for PowScalar<T> {
 
 macro_rules! impl_pow_scalar {
     ($t:ty, $u:ty) => {
-        impl<'a, D: Device> Operation<'a, $t, D> for PowScalar<$u> {
+        impl<D: Device> Operation<$t, D> for PowScalar<$u> {
             fn compute(&self, args: &[NDArray<$t, D>]) -> NDArray<$t, D> {
                 args[0].pow(self.0)
             }
 
             fn gradient(
                 &self,
-                out_grad: &Tensor<'a, $t, D>,
-                node: &Tensor<'a, $t, D>,
-            ) -> Vec<Tensor<'a, $t, D>> {
+                out_grad: &Tensor<$t, D>,
+                node: &Tensor<$t, D>,
+            ) -> Vec<Tensor<$t, D>> {
                 let input = &node.0.read().unwrap().inputs[0];
                 vec![&(out_grad * (self.0 as $t)) * &input.pow(self.0 - <$u as One>::one())]
             }
@@ -265,21 +265,21 @@ impl_pow_scalar!(i32, u32);
 impl_pow_scalar!(i64, u32);
 impl_pow_scalar!(i128, u32);
 
-impl<'a, T: Float + 'a, D: Device> Operation<'a, T, D> for Ln {
+impl<T: Float, D: Device> Operation<T, D> for Ln {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].ln()
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         vec![out_grad / &node.0.read().unwrap().inputs[0]]
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Transpose {
+impl<T: Type, D: Device> Operation<T, D> for Transpose {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         let len = args[0].ndim();
         if len < 2 {
@@ -294,36 +294,36 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Transpose {
         args[0].permute(&axes)
     }
 
-    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad.transpose(self.0)]
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for MaximumScalar<T> {
+impl<T: Type, D: Device> Operation<T, D> for MaximumScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].max_scalar(self.0)
     }
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         vec![out_grad * &node.gt(self.0)]
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for GTScalar<T> {
+impl<T: Type, D: Device> Operation<T, D> for GTScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].gt_scalar(self.0)
     }
 
-    fn gradient(&self, out_grad: &Tensor<'a, T, D>, _: &Tensor<'a, T, D>) -> Vec<Tensor<'a, T, D>> {
+    fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad * T::zero()]
     }
 }
 
-impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Matmul {
+impl<T: Type, D: Device> Operation<T, D> for Matmul {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         let mut lhs = &args[0];
         let mut rhs = &args[1];
@@ -362,9 +362,9 @@ impl<'a, T: Type + 'a, D: Device> Operation<'a, T, D> for Matmul {
 
     fn gradient(
         &self,
-        out_grad: &Tensor<'a, T, D>,
-        node: &Tensor<'a, T, D>,
-    ) -> Vec<Tensor<'a, T, D>> {
+        out_grad: &Tensor<T, D>,
+        node: &Tensor<T, D>,
+    ) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
         let in_grads = vec![
             out_grad.matmul(&inputs[1].transpose(None)),
@@ -396,10 +396,10 @@ fn broadcast_shapes(lhs: &[usize], rhs: &[usize]) -> Vec<usize> {
     }
 }
 
-fn reduce_to_shape<'a, T: Type, D: Device>(
-    mut grads: Vec<Tensor<'a, T, D>>,
+fn reduce_to_shape<T: Type, D: Device>(
+    mut grads: Vec<Tensor<T, D>>,
     inputs: &[Tensor<T, D>],
-) -> Vec<Tensor<'a, T, D>> {
+) -> Vec<Tensor<T, D>> {
     for i in 0..inputs.len() {
         let input_shape = inputs[i].shape();
         if input_shape != grads[i].shape() {
@@ -409,10 +409,10 @@ fn reduce_to_shape<'a, T: Type, D: Device>(
     grads
 }
 
-fn reduce_by_add<'a, T: Type, D: Device>(
-    input: &Tensor<'a, T, D>,
+fn reduce_by_add<T: Type, D: Device>(
+    input: &Tensor<T, D>,
     output_shape: &[usize],
-) -> Tensor<'a, T, D> {
+) -> Tensor<T, D> {
     let input_shape = input.shape();
     let n = input_shape.len() - output_shape.len();
     let sum = input.sum(Some((0..n).collect::<Vec<_>>()), false);
