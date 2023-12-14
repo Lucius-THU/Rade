@@ -103,13 +103,13 @@ impl<'a, T: Float, D: Device> Optimizer<T, D> for Adam<T, D> {
             if self.u.len() <= i {
                 self.u.push((&grad * (T::one() - self.beta1)).detach(false));
                 self.v.push(
-                    (&(grad.pow(T::from(2).unwrap())) * (T::one() - self.beta2)).detach(false),
+                    (&(&grad * &grad) * (T::one() - self.beta2)).detach(false),
                 );
             } else {
                 self.u[i] =
                     (&(&self.u[i] * self.beta1) + &(&grad * (T::one() - self.beta1))).detach(false);
                 self.v[i] = (&(&self.v[i] * self.beta2)
-                    + &(&grad.pow(T::from(2).unwrap()) * (T::one() - self.beta2)))
+                    + &(&(&grad * &grad) * (T::one() - self.beta2)))
                     .detach(false);
             }
             let u = &self.u[i] / (T::one() - self.beta1.pow(T::from(self.t).unwrap()));

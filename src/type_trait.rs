@@ -4,10 +4,11 @@ use bincode::{Decode, Encode};
 use num_traits::{Num, Pow, ToPrimitive};
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
-use std::ops::{Add, Index};
+use std::ops::{Add, AddAssign, Index};
+use crate::cpu::ops::Ops;
 
 pub trait Type:
-    'static + Encode + Decode + Num + SampleUniform + Copy + Display + PartialOrd + Add<Output = Self>
+    'static + Encode + Decode + Num + SampleUniform + Copy + Display + PartialOrd + Add<Output = Self> + AddAssign + Ops
 {
     fn atol() -> Self {
         Self::zero()

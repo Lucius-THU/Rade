@@ -236,24 +236,12 @@ impl Idx {
     }
 
     pub fn next(&mut self) -> bool {
-        for (i, &dim) in self.shape.iter().enumerate().rev() {
-            self.idx[i] += 1;
-            if self.idx[i] == dim {
-                self.idx[i] = 0;
-            } else {
+        for (id, &dim) in self.idx.iter_mut().zip(&self.shape).rev() {
+            *id += 1;
+            if *id < dim {
                 return true;
-            }
-        }
-        false
-    }
-
-    pub fn next_out_dim(&mut self, dim: usize) -> bool {
-        for (i, &d) in self.shape[..dim].iter().enumerate().rev() {
-            self.idx[i] += 1;
-            if self.idx[i] == d {
-                self.idx[i] = 0;
             } else {
-                return true;
+                *id = 0;
             }
         }
         false
