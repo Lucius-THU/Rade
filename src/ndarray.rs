@@ -247,18 +247,6 @@ impl Idx {
         false
     }
 
-    pub fn next_in_dim(&mut self, dim: usize) -> bool {
-        for (i, &d) in self.shape[dim..].iter().enumerate().rev() {
-            self.idx[i + dim] += 1;
-            if self.idx[i + dim] == d {
-                self.idx[i + dim] = 0;
-            } else {
-                return true;
-            }
-        }
-        false
-    }
-
     pub fn next_out_dim(&mut self, dim: usize) -> bool {
         for (i, &d) in self.shape[..dim].iter().enumerate().rev() {
             self.idx[i] += 1;

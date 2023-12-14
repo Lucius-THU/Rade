@@ -255,37 +255,35 @@ impl Device for CPU {
 
     fn matmul<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
         let len = lhs.ndim();
-        let mut axes = (0..len).collect::<Vec<_>>();
-        axes.swap(len - 1, len - 2);
-        let rhs = &rhs.permute(&axes);
         let mut shape = lhs.0.shape.clone();
-        let [n, m, k] = [shape[len - 2], shape[len - 1], rhs.0.shape[len - 2]];
+        let [n, m, k] = [shape[len - 2], shape[len - 1], rhs.0.shape[len - 1]];
         shape[len - 1] = k;
         let mut idx = Idx::new(&shape);
         let strides = ndarray::compact_strides(&shape);
         let mut data = Vec::with_capacity(shape[0] * strides[0]);
         let mut lhs_idx = Idx::new(&lhs.0.shape);
         let mut rhs_idx = Idx::new(&rhs.0.shape);
-        loop {
-            let mut stop = false;
-            for _ in 0..n {
+        'outer: loop {
+            let mut temp_rhs = vec![Vec::with_capacity(k); m];
+            for i in 0..m {
                 for _ in 0..k {
-                    let mut sum = T::zero();
-                    for _ in 0..m {
-                        sum = sum + lhs[&lhs_idx] * rhs[&rhs_idx];
-                        lhs_idx.next_in_dim(len - 1);
-                        rhs_idx.next_in_dim(len - 2);
-                    }
-                    data.push(sum);
-                    if !idx.next() {
-                        stop = true;
+                    temp_rhs[i].push(rhs[&rhs_idx]);
+                    rhs_idx.next();
+                }
+            }
+            for _ in 0..n {
+                let mut sum = vec![T::zero(); k];
+                for i in 0..m {
+                    let temp = lhs[&lhs_idx];
+                    lhs_idx.next();
+                    for j in 0..k {
+                        sum[j] = sum[j] + temp * temp_rhs[i][j];
                     }
                 }
-                lhs_idx.next_out_dim(len - 1);
-            }
-            rhs_idx.next_out_dim(len - 2);
-            if stop {
-                break;
+                data.extend(sum);
+                if !idx.next_out_dim(len - 1) {
+                    break 'outer;
+                }
             }
         }
         NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
@@ -410,14 +408,14 @@ impl<T: Type> Index<&Idx> for NDArray<T, CPU> {
     type Output = T;
 
     fn index(&self, index: &Idx) -> &Self::Output {
-        let mut idx = 0;
-        for (i, &dim) in index.idx.iter().enumerate() {
-            idx += dim * self.0.strides[i];
+        let mut idx = self.0.offset;
+        for (dim, stride) in index.idx.iter().zip(&self.0.strides) {
+            idx += dim * stride;
         }
         if let Storage::CPU(data) = &self.0.data.as_ref() {
-            &data[idx + self.0.offset]
+            &data[idx]
         } else {
-            panic!("Tensor Storage mismatched with Device")
+            panic!("Tensor Storage mismatched with Device.")
         }
     }
 }
