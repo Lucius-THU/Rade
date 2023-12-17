@@ -41,6 +41,8 @@ pub(crate) struct ScalarDiv<T: Type>(pub T);
 
 pub(crate) struct Ln;
 
+pub(crate) struct Sqrt;
+
 pub(crate) struct Transpose(pub Option<(usize, usize)>);
 
 pub(crate) struct MaximumScalar<T: Type>(pub T);
@@ -275,6 +277,16 @@ impl<T: Float, D: Device> Operation<T, D> for Ln {
 
     fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad / &node.0.read().unwrap().inputs[0]]
+    }
+}
+
+impl<T: Float, D: Device> Operation<T, D> for Sqrt {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].sqrt()
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        vec![out_grad / &(node * T::from(2).unwrap())]
     }
 }
 

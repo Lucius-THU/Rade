@@ -1,6 +1,6 @@
 use crate::device::Device;
-use crate::type_trait::Type;
-use num_traits::{Float, Pow};
+use crate::type_trait::{Float, Type};
+use num_traits::Pow;
 use std::ops::{Add, Div, Mul};
 use std::sync::Arc;
 
@@ -154,9 +154,13 @@ impl<T: Type, D: Device> NDArray<T, D> {
     }
 }
 
-impl<T: Type + Float, D: Device> NDArray<T, D> {
+impl<T: Float, D: Device> NDArray<T, D> {
     pub fn ln(&self) -> Self {
         self.0.device.ln(self)
+    }
+
+    pub fn sqrt(&self) -> Self {
+        self.0.device.sqrt(self)
     }
 }
 

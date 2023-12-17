@@ -1,12 +1,12 @@
 use crate::device::Device;
 use crate::ndarray::{self, Idx, NDArray, Storage};
 use crate::tensor::Tensor;
-use crate::type_trait::{Type, Unsigned};
+use crate::type_trait::{Float, Type, Unsigned};
 use bincode::de::Decoder;
 use bincode::enc::Encoder;
 use bincode::error::{DecodeError, EncodeError};
 use bincode::{Decode, Encode};
-use num_traits::{Float, Pow};
+use num_traits::Pow;
 use rand::distributions::{Distribution, Uniform};
 use std::cmp::min;
 use std::fmt::{self, Display, Formatter};
@@ -40,6 +40,65 @@ impl CPU {
         } else {
             panic!("Tensor Storage mismatched with Device.")
         }
+    }
+
+    fn ewise_op<T: Type>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        rhs: &NDArray<T, Self>,
+        op: impl Fn(T, T) -> T,
+    ) -> NDArray<T, Self> {
+        if !lhs.is_contiguous() {
+            return self.ewise_op(&lhs.contiguous(), rhs, op);
+        }
+        if !rhs.is_contiguous() {
+            return self.ewise_op(lhs, &rhs.contiguous(), op);
+        }
+        if let (Storage::CPU(lhs_data), Storage::CPU(rhs_data)) =
+            (lhs.0.data.as_ref(), rhs.0.data.as_ref())
+        {
+            let data = lhs_data[lhs.0.offset..]
+                .iter()
+                .zip(&rhs_data[rhs.0.offset..])
+                .map(|(&x, &y)| op(x, y))
+                .collect::<Vec<_>>();
+            NDArray::make(
+                Storage::CPU(data),
+                lhs.0.shape.clone(),
+                lhs.0.strides.clone(),
+                0,
+                Self,
+            )
+        } else {
+            panic!("Tensor Storage mismatched with Device.")
+        }
+    }
+
+    fn reduce_op<T: Type>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        shape: Vec<usize>,
+        reduce_dims: usize,
+        init: T,
+        op: impl Fn(T, T) -> T,
+    ) -> NDArray<T, Self> {
+        let strides = ndarray::compact_strides(&shape);
+        let mut data = Vec::with_capacity(shape[0] * strides[0]);
+        let mut idx = Idx::new(&lhs.0.shape);
+        let reduce_lens = idx.shape[reduce_dims..lhs.ndim()].iter().product::<usize>();
+        loop {
+            let mut acc = init;
+            let mut stop = false;
+            for _ in 0..reduce_lens {
+                acc = op(acc, lhs[&idx]);
+                stop = !idx.next();
+            }
+            data.push(acc);
+            if stop {
+                break;
+            }
+        }
+        NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
     }
 }
 
@@ -117,17 +176,7 @@ impl Device for CPU {
     }
 
     fn add<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
-        let shape = &lhs.0.shape;
-        let strides = ndarray::compact_strides(shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
-        let mut idx = Idx::new(shape);
-        loop {
-            data.push(lhs[&idx] + rhs[&idx]);
-            if !idx.next() {
-                break;
-            }
-        }
-        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
+        self.ewise_op(lhs, rhs, |x, y| x + y)
     }
 
     fn add_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
@@ -135,17 +184,7 @@ impl Device for CPU {
     }
 
     fn mul<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
-        let shape = &lhs.0.shape;
-        let strides = ndarray::compact_strides(shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
-        let mut idx = Idx::new(shape);
-        loop {
-            data.push(lhs[&idx] * rhs[&idx]);
-            if !idx.next() {
-                break;
-            }
-        }
-        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
+        self.ewise_op(lhs, rhs, |x, y| x * y)
     }
 
     fn mul_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
@@ -170,17 +209,7 @@ impl Device for CPU {
         lhs: &NDArray<T, Self>,
         rhs: &NDArray<T, Self>,
     ) -> NDArray<T, Self> {
-        let shape = &lhs.0.shape;
-        let strides = ndarray::compact_strides(shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
-        let mut idx = Idx::new(shape);
-        loop {
-            data.push(lhs[&idx].pow(rhs[&idx]));
-            if !idx.next() {
-                break;
-            }
-        }
-        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
+        self.ewise_op(lhs, rhs, |x, y| x.pow(y))
     }
 
     fn pow_scalar<U: Type, T: Type + Pow<U, Output = T>>(
@@ -200,17 +229,7 @@ impl Device for CPU {
     }
 
     fn div<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
-        let shape = &lhs.0.shape;
-        let strides = ndarray::compact_strides(shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
-        let mut idx = Idx::new(shape);
-        loop {
-            data.push(lhs[&idx] / rhs[&idx]);
-            if !idx.next() {
-                break;
-            }
-        }
-        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
+        self.ewise_op(lhs, rhs, |x, y| x / y)
     }
 
     fn div_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
@@ -221,8 +240,12 @@ impl Device for CPU {
         self.scalar_op(lhs, rhs, |x, y| y / x)
     }
 
-    fn ln<T: Type + Float>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self> {
+    fn ln<T: Float>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self> {
         self.scalar_op(lhs, T::zero(), |x, _| x.ln())
+    }
+
+    fn sqrt<T: Float>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self> {
+        self.scalar_op(lhs, T::zero(), |x, _| x.sqrt())
     }
 
     fn maximum_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
@@ -300,23 +323,7 @@ impl Device for CPU {
         shape: Vec<usize>,
         reduce_dims: usize,
     ) -> NDArray<T, Self> {
-        let strides = ndarray::compact_strides(&shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
-        let mut idx = Idx::new(&lhs.0.shape);
-        let reduce_lens = idx.shape[reduce_dims..lhs.ndim()].iter().product::<usize>();
-        loop {
-            let mut sum = T::zero();
-            let mut stop = false;
-            for _ in 0..reduce_lens {
-                sum = sum + lhs[&idx];
-                stop = !idx.next();
-            }
-            data.push(sum);
-            if stop {
-                break;
-            }
-        }
-        NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
+        self.reduce_op(lhs, shape, reduce_dims, T::zero(), |x, y| x + y)
     }
 
     fn max<T: Type>(
@@ -325,43 +332,17 @@ impl Device for CPU {
         shape: Vec<usize>,
         reduce_dims: usize,
     ) -> NDArray<T, Self> {
-        let strides = ndarray::compact_strides(&shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
-        let mut idx = Idx::new(&lhs.0.shape);
-        let reduce_lens = idx.shape[reduce_dims..lhs.ndim()].iter().product::<usize>();
-        loop {
-            let mut max = lhs[&idx];
-            let mut stop = !idx.next();
-            for _ in 1..reduce_lens {
-                if lhs[&idx] > max {
-                    max = lhs[&idx];
-                }
-                stop = !idx.next();
+        self.reduce_op(lhs, shape, reduce_dims, T::min_value(), |x, y| {
+            if x > y {
+                x
+            } else {
+                y
             }
-            data.push(max);
-            if stop {
-                break;
-            }
-        }
-        NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
+        })
     }
 
     fn equal<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
-        let shape = &lhs.0.shape;
-        let strides = ndarray::compact_strides(shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
-        let mut idx = Idx::new(shape);
-        loop {
-            data.push(if lhs[&idx] == rhs[&idx] {
-                T::one()
-            } else {
-                T::zero()
-            });
-            if !idx.next() {
-                break;
-            }
-        }
-        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
+        self.ewise_op(lhs, rhs, |x, y| if x == y { T::one() } else { T::zero() })
     }
 
     fn contiguous<T: Type>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self> {

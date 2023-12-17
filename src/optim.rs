@@ -1,7 +1,6 @@
 use crate::device::Device;
 use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type};
-use num_traits::Pow;
 
 pub trait Optimizer<T: Type, D: Device> {
     fn parameters(&self) -> &[Tensor<T, D>];
@@ -113,9 +112,7 @@ impl<'a, T: Float, D: Device> Optimizer<T, D> for Adam<T, D> {
             }
             let u = &self.u[i] / (T::one() - self.beta1.pow(T::from(self.t).unwrap()));
             let v = &self.v[i] / (T::one() - self.beta2.pow(T::from(self.t).unwrap()));
-            parameter.set_data(
-                parameter - &(&(&u * self.lr) / &(&v.pow(T::from(0.5).unwrap()) + self.eps)),
-            );
+            parameter.set_data(parameter - &(&(&u * self.lr) / &(&v.sqrt() + self.eps)));
         }
     }
 }

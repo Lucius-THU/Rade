@@ -1,17 +1,21 @@
 use crate::cpu::ops::Ops;
 use crate::device::Device;
+use crate::operation::ScalarPow;
 use crate::tensor::Tensor;
 use bincode::{Decode, Encode};
-use num_traits::{Num, Pow, ToPrimitive};
+use num_traits::{Bounded, Num, Pow, ToPrimitive};
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
 use std::ops::{Add, AddAssign, Index};
 
 pub trait Type:
     'static
+    + Send
+    + Sync
     + Encode
     + Decode
     + Num
+    + Bounded
     + SampleUniform
     + Copy
     + Display
@@ -71,8 +75,12 @@ impl<T, const N: usize> Len<T> for [T; N] {
 }
 
 pub trait Float: Signed + num_traits::Float + Pow<Self, Output = Self> {
-    fn powt<D: Device>(self, rhs: &Tensor<Self, D>) -> Tensor<Self, D>;
+    fn powt<D: Device>(self, rhs: &Tensor<Self, D>) -> Tensor<Self, D> {
+        Tensor::calc(ScalarPow(self), vec![rhs.clone()])
+    }
 }
+
+impl<T: Signed + num_traits::Float + Pow<Self, Output = Self>> Float for T {}
 
 pub trait Signed: Type + num_traits::Signed + ToPrimitive {}
 

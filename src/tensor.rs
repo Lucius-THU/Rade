@@ -2,7 +2,7 @@ use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::operation::{
     AddScalar, Broadcast, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, Equal, GTScalar, Ln,
-    Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarDiv, ScalarPow,
+    Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarDiv, Sqrt,
     Summation, Transpose,
 };
 use crate::type_trait::{Float, Len, Signed, Type, Unsigned};
@@ -243,7 +243,7 @@ impl<T: Type, D: Device> Tensor<T, D> {
         value.cached_data.clone().unwrap()
     }
 
-    fn calc(op: impl Operation<T, D> + 'static, args: Vec<Tensor<T, D>>) -> Self {
+    pub(crate) fn calc(op: impl Operation<T, D> + 'static, args: Vec<Tensor<T, D>>) -> Self {
         let requires_grad = args.iter().any(|x| x.0.read().unwrap().requires_grad);
         let mut output = Self::make(None, args, Some(Box::new(op)), requires_grad);
         if !crate::is_lazy() {
@@ -260,6 +260,10 @@ impl<T: Type, D: Device> Tensor<T, D> {
 impl<T: Float, D: Device> Tensor<T, D> {
     pub fn ln(&self) -> Self {
         Self::calc(Ln, vec![self.clone()])
+    }
+
+    pub fn sqrt(&self) -> Self {
+        Self::calc(Sqrt, vec![self.clone()])
     }
 
     pub fn exp(&self) -> Self {
@@ -394,18 +398,6 @@ macro_rules! impl_pow_scalar {
     };
 }
 
-macro_rules! impl_scalar_pow {
-    ($($t:ty),*) => {
-        $(
-            impl Float for $t {
-                fn powt<D: Device>(self, rhs: &Tensor<$t, D>) -> Tensor<$t, D> {
-                    Tensor::calc(ScalarPow(self), vec![rhs.clone()])
-                }
-            }
-        )*
-    };
-}
-
 impl_pow_scalar!(f32, i32);
 impl_pow_scalar!(f64, i32);
 impl_pow_scalar!(isize, u32);
@@ -414,8 +406,6 @@ impl_pow_scalar!(i16, u32);
 impl_pow_scalar!(i32, u32);
 impl_pow_scalar!(i64, u32);
 impl_pow_scalar!(i128, u32);
-
-impl_scalar_pow!(f32, f64);
 
 macro_rules! impl_add {
     ($($t:ty),*) => {

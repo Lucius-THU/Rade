@@ -3,7 +3,6 @@ use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type};
 use bincode::config;
 use bincode::error::{DecodeError, EncodeError};
-use num_traits::Pow;
 use std::{fs, path::Path};
 
 pub trait Module<T: Type, D: Device> {
@@ -192,23 +191,20 @@ impl<T: Float, D: Device> Module<T, D> for BatchNorm<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         if !self.training {
             &(&(&self.weight * &(input - &self.running_mean))
-                / &(&self.running_var + self.eps).pow(T::from(0.5).unwrap()))
+                / &(&self.running_var + self.eps).sqrt())
                 + &self.bias
         } else {
             let batch = T::from(input.shape()[0]).unwrap();
             let e_x = &input.sum(Some(vec![0]), false) / batch;
-            let var_x = &(input - &e_x)
-                .pow(T::from(2).unwrap())
-                .sum(Some(vec![0]), false)
-                / batch;
+            let diff_x = &(input - &e_x);
+            let var_x = &(diff_x * diff_x).sum(Some(vec![0]), false) / batch;
             self.running_mean = (&(&e_x * self.momentum)
                 + &(&self.running_mean * (T::one() - self.momentum)))
                 .detach(false);
             self.running_var = (&(&var_x * self.momentum)
                 + &(&self.running_var * (T::one() - self.momentum)))
                 .detach(false);
-            &(&(&self.weight * &(input - &e_x)) / &(&var_x + self.eps).pow(T::from(0.5).unwrap()))
-                + &self.bias
+            &(&(&self.weight * &(input - &e_x)) / &(&var_x + self.eps).sqrt()) + &self.bias
         }
     }
 
