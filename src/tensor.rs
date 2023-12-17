@@ -1,15 +1,16 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::operation::{
-    AddScalar, Broadcast, EWiseAdd, EWiseMul, EWisePow, Equal, GTScalar, Ln, Matmul, Max,
-    MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarPow, Summation, Transpose,
+    AddScalar, Broadcast, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, Equal, GTScalar, Ln,
+    Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarDiv, ScalarPow,
+    Summation, Transpose,
 };
-use crate::type_trait::{Float, Len, Type, Unsigned};
+use crate::type_trait::{Float, Len, Signed, Type, Unsigned};
 use bincode::de::Decoder;
 use bincode::enc::Encoder;
 use bincode::error::{DecodeError, EncodeError};
 use bincode::{Decode, Encode};
-use num_traits::{NumCast, One, Pow, Zero};
+use num_traits::{One, Pow, Zero};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -319,19 +320,19 @@ impl<T: Type, D: Device> Sub<T> for &Tensor<T, D> {
     }
 }
 
-impl<T: Float, D: Device> Div for &Tensor<T, D> {
+impl<T: Signed, D: Device> Div for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn div(self, rhs: Self) -> Self::Output {
-        self * &rhs.pow(T::from(-1).unwrap())
+        Tensor::calc(EWiseDiv, vec![self.clone(), rhs.clone()])
     }
 }
 
-impl<T: Type, D: Device> Div<T> for &Tensor<T, D> {
+impl<T: Signed, D: Device> Div<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn div(self, rhs: T) -> Self::Output {
-        self * (T::one() / rhs)
+        Tensor::calc(DivScalar(rhs), vec![self.clone()])
     }
 }
 
@@ -372,14 +373,14 @@ macro_rules! impl_div {
                 type Output = Tensor<$t, D>;
 
                 fn div(self, rhs: &Tensor<$t, D>) -> Self::Output {
-                    self * &rhs.pow(<$t as NumCast>::from(-1).unwrap())
+                    Tensor::calc(ScalarDiv(self), vec![rhs.clone()])
                 }
             }
         )*
     };
 }
 
-impl_div!(f32, f64);
+impl_div!(isize, i8, i16, i32, i64, i128, f32, f64);
 
 macro_rules! impl_pow_scalar {
     ($t:ty, $u:ty) => {

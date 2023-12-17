@@ -1,3 +1,4 @@
+use crate::cpu::ops::Ops;
 use crate::device::Device;
 use crate::tensor::Tensor;
 use bincode::{Decode, Encode};
@@ -5,10 +6,19 @@ use num_traits::{Num, Pow, ToPrimitive};
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
 use std::ops::{Add, AddAssign, Index};
-use crate::cpu::ops::Ops;
 
 pub trait Type:
-    'static + Encode + Decode + Num + SampleUniform + Copy + Display + PartialOrd + Add<Output = Self> + AddAssign + Ops
+    'static
+    + Encode
+    + Decode
+    + Num
+    + SampleUniform
+    + Copy
+    + Display
+    + PartialOrd
+    + Add<Output = Self>
+    + AddAssign
+    + Ops
 {
     fn atol() -> Self {
         Self::zero()
@@ -60,9 +70,13 @@ impl<T, const N: usize> Len<T> for [T; N] {
     }
 }
 
-pub trait Float: Type + num_traits::Float + Pow<Self, Output = Self> {
+pub trait Float: Signed + num_traits::Float + Pow<Self, Output = Self> {
     fn powt<D: Device>(self, rhs: &Tensor<Self, D>) -> Tensor<Self, D>;
 }
+
+pub trait Signed: Type + num_traits::Signed + ToPrimitive {}
+
+impl<T: Type + num_traits::Signed + ToPrimitive> Signed for T {}
 
 pub trait Unsigned: Type + num_traits::Unsigned + ToPrimitive {}
 

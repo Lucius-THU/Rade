@@ -1,8 +1,9 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::tensor::Tensor;
-use crate::type_trait::{Float, Type};
+use crate::type_trait::{Float, Signed, Type};
 use num_traits::{One, Pow};
+use std::ops::Div;
 
 pub(crate) trait Operation<T: Type, D: Device> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D>;
@@ -31,6 +32,12 @@ pub(crate) struct EWisePow;
 pub(crate) struct PowScalar<T: Type>(pub T);
 
 pub(crate) struct ScalarPow<T: Type>(pub T);
+
+pub(crate) struct EWiseDiv;
+
+pub(crate) struct DivScalar<T: Type>(pub T);
+
+pub(crate) struct ScalarDiv<T: Type>(pub T);
 
 pub(crate) struct Ln;
 
@@ -224,6 +231,42 @@ impl_pow_scalar!(i16, u32);
 impl_pow_scalar!(i32, u32);
 impl_pow_scalar!(i64, u32);
 impl_pow_scalar!(i128, u32);
+
+impl<T: Signed, D: Device> Operation<T, D> for EWiseDiv {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        apply_with_broadcast(args, |lhs, rhs| lhs.div(rhs))
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        let inputs = &node.0.read().unwrap().inputs;
+        let in_grads = vec![
+            out_grad / &inputs[1],
+            &(out_grad * &-&inputs[0]) / &(&inputs[1] * &inputs[1]),
+        ];
+        reduce_to_shape(in_grads, inputs)
+    }
+}
+
+impl<T: Signed, D: Device> Operation<T, D> for DivScalar<T> {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].div(self.0)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        vec![out_grad / self.0]
+    }
+}
+
+impl<D: Device, T: Signed> Operation<T, D> for ScalarDiv<T> {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].scalar_div(self.0)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        let input = &node.0.read().unwrap().inputs[0];
+        vec![&(out_grad * -self.0) / &(input * input)]
+    }
+}
 
 impl<T: Float, D: Device> Operation<T, D> for Ln {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {

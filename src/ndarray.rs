@@ -1,7 +1,7 @@
 use crate::device::Device;
 use crate::type_trait::Type;
 use num_traits::{Float, Pow};
-use std::ops::{Add, Mul};
+use std::ops::{Add, Div, Mul};
 use std::sync::Arc;
 
 pub enum Storage<T> {
@@ -125,6 +125,10 @@ impl<T: Type, D: Device> NDArray<T, D> {
         ret
     }
 
+    pub fn scalar_div(&self, rhs: T) -> Self {
+        self.0.device.scalar_div(self, rhs)
+    }
+
     pub fn max_scalar(&self, rhs: T) -> Self {
         self.0.device.maximum_scalar(self, rhs)
     }
@@ -213,6 +217,22 @@ impl<U: Type, T: Type + Pow<U, Output = T>, D: Device> Pow<U> for &NDArray<T, D>
 
     fn pow(self, rhs: U) -> Self::Output {
         self.0.device.pow_scalar(self, rhs)
+    }
+}
+
+impl<T: Type, D: Device> Div<&NDArray<T, D>> for &NDArray<T, D> {
+    type Output = NDArray<T, D>;
+
+    fn div(self, rhs: &NDArray<T, D>) -> Self::Output {
+        self.0.device.div(self, rhs)
+    }
+}
+
+impl<T: Type, D: Device> Div<T> for &NDArray<T, D> {
+    type Output = NDArray<T, D>;
+
+    fn div(self, rhs: T) -> Self::Output {
+        self.0.device.div_scalar(self, rhs)
     }
 }
 

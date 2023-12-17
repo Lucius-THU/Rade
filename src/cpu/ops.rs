@@ -1,5 +1,5 @@
-use std::simd::Simd;
 use num_traits::Zero;
+use std::simd::Simd;
 
 pub trait Ops: Sized {
     const LANES: usize;

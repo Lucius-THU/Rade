@@ -102,9 +102,8 @@ impl<'a, T: Float, D: Device> Optimizer<T, D> for Adam<T, D> {
                 (&parameter.grad().unwrap() + &(parameter * self.weight_decay)).detach(false);
             if self.u.len() <= i {
                 self.u.push((&grad * (T::one() - self.beta1)).detach(false));
-                self.v.push(
-                    (&(&grad * &grad) * (T::one() - self.beta2)).detach(false),
-                );
+                self.v
+                    .push((&(&grad * &grad) * (T::one() - self.beta2)).detach(false));
             } else {
                 self.u[i] =
                     (&(&self.u[i] * self.beta1) + &(&grad * (T::one() - self.beta1))).detach(false);

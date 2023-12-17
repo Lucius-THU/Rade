@@ -47,6 +47,12 @@ pub trait Device: Clone {
         rhs: &NDArray<T, Self>,
     ) -> NDArray<T, Self>;
 
+    fn div<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self>;
+
+    fn div_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;
+
+    fn scalar_div<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;
+
     fn ln<T: Type + Float>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>;
 
     fn maximum_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self>;

@@ -1,4 +1,3 @@
-use std::cmp::min;
 use crate::device::Device;
 use crate::ndarray::{self, Idx, NDArray, Storage};
 use crate::tensor::Tensor;
@@ -9,6 +8,7 @@ use bincode::error::{DecodeError, EncodeError};
 use bincode::{Decode, Encode};
 use num_traits::{Float, Pow};
 use rand::distributions::{Distribution, Uniform};
+use std::cmp::min;
 use std::fmt::{self, Display, Formatter};
 use std::ops::Index;
 use std::slice;
@@ -19,10 +19,24 @@ pub(crate) mod ops;
 pub struct CPU;
 
 impl CPU {
-    fn scalar_op<T: Type, U: Type>(&self, lhs: &NDArray<T, Self>, rhs: U, op: impl Fn(T, U) -> T) -> NDArray<T, Self> {
+    fn scalar_op<T: Type, U: Type>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        rhs: U,
+        op: impl Fn(T, U) -> T,
+    ) -> NDArray<T, Self> {
         if let Storage::CPU(lhs_data) = &lhs.0.data.as_ref() {
-            let data = lhs_data[lhs.0.offset..].iter().map(|&x| op(x, rhs)).collect::<Vec<_>>();
-            NDArray::make(Storage::CPU(data), lhs.0.shape.clone(), lhs.0.strides.clone(), 0, Self)
+            let data = lhs_data[lhs.0.offset..]
+                .iter()
+                .map(|&x| op(x, rhs))
+                .collect::<Vec<_>>();
+            NDArray::make(
+                Storage::CPU(data),
+                lhs.0.shape.clone(),
+                lhs.0.strides.clone(),
+                0,
+                Self,
+            )
         } else {
             panic!("Tensor Storage mismatched with Device.")
         }
@@ -185,6 +199,28 @@ impl Device for CPU {
         self.scalar_op(rhs, lhs, |x, y| y.pow(x))
     }
 
+    fn div<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
+        let shape = &lhs.0.shape;
+        let strides = ndarray::compact_strides(shape);
+        let mut data = Vec::with_capacity(shape[0] * strides[0]);
+        let mut idx = Idx::new(shape);
+        loop {
+            data.push(lhs[&idx] / rhs[&idx]);
+            if !idx.next() {
+                break;
+            }
+        }
+        NDArray::make(Storage::CPU(data), idx.shape, strides, 0, Self)
+    }
+
+    fn div_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
+        self.scalar_op(lhs, rhs, |x, y| x / y)
+    }
+
+    fn scalar_div<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
+        self.scalar_op(lhs, rhs, |x, y| y / x)
+    }
+
     fn ln<T: Type + Float>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self> {
         self.scalar_op(lhs, T::zero(), |x, _| x.ln())
     }
@@ -197,7 +233,7 @@ impl Device for CPU {
         self.scalar_op(lhs, rhs, |x, y| if x > y { T::one() } else { T::zero() })
     }
 
-    fn matmul<T: Type> (&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
+    fn matmul<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
         let len = lhs.ndim();
         let mut shape = lhs.0.shape.clone();
         let dims = [shape[len - 2], shape[len - 1], rhs.0.shape[len - 1]];
@@ -209,7 +245,10 @@ impl Device for CPU {
         let mut lhs_idx = Idx::new(&lhs.0.shape);
         let mut rhs_idx = Idx::new(&rhs.0.shape);
         let tile = T::LANES;
-        let tiled_dims = dims.iter().map(|x| (x + tile - 1) / tile * tile).collect::<Vec<_>>();
+        let tiled_dims = dims
+            .iter()
+            .map(|x| (x + tile - 1) / tile * tile)
+            .collect::<Vec<_>>();
         for o in 0..total / inner_size {
             let outer_offset = o * inner_size;
             let mut temp_rhs = vec![T::zero(); tiled_dims[1] * tiled_dims[2]];
@@ -417,4 +456,3 @@ impl<T: Type> Display for Tensor<T, CPU> {
         write!(f, "{ending})")
     }
 }
-
