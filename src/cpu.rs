@@ -196,16 +196,23 @@ impl Device for CPU {
     }
 
     fn eq<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> bool {
-        let mut idx = Idx::new(&lhs.0.shape);
-        loop {
-            if (lhs[&idx] - rhs[&idx]).abs() > T::atol() {
-                return false;
-            }
-            if !idx.next() {
-                break;
-            }
+        if !lhs.is_contiguous() {
+            return self.eq(&lhs.contiguous(), rhs);
         }
-        true
+        if !rhs.is_contiguous() {
+            return self.eq(lhs, &rhs.contiguous());
+        }
+        if let (Storage::CPU(lhs_data), Storage::CPU(rhs_data)) =
+            (lhs.0.data.as_ref(), rhs.0.data.as_ref())
+        {
+            let len = lhs.len();
+            lhs_data[lhs.0.offset..lhs.0.offset + len]
+                .iter()
+                .zip(&rhs_data[rhs.0.offset..rhs.0.offset + len])
+                .all(|(&x, &y)| (x - y).abs() < T::atol())
+        } else {
+            panic!("Tensor Storage mismatched with Device.")
+        }
     }
 
     fn pow<T: Type + Pow<T, Output = T>>(
@@ -290,6 +297,7 @@ impl Device for CPU {
             for m in (0..dims[0]).step_by(tile) {
                 let mut temp_lhs = vec![T::zero(); tile * tiled_dims[1]];
                 let r = min(tile, dims[0] - m);
+                let m_offset = m * dims[2];
                 for i in 0..r {
                     for j in 0..dims[1] {
                         let col_tiled = j / tile * tile;
@@ -300,7 +308,7 @@ impl Device for CPU {
                 }
                 for n in (0..dims[2]).step_by(tile) {
                     let c = min(tile, dims[2] - n);
-                    let inner_offset = outer_offset + m * dims[2] + n;
+                    let inner_offset = outer_offset + m_offset + n;
                     for v in (0..dims[1]).step_by(tile) {
                         let t1 = v * tile;
                         let t2 = (v + tile) * tile;
@@ -310,8 +318,9 @@ impl Device for CPU {
                         let temp_ans = T::tiled_matmul(tile_lhs, tile_rhs);
                         for i in 0..r {
                             let i_offset = i * tile;
+                            let x_inner = inner_offset + i * dims[2];
                             for j in 0..c {
-                                data[inner_offset + i * dims[2] + j] += temp_ans[i_offset + j];
+                                data[x_inner + j] += temp_ans[i_offset + j];
                             }
                         }
                     }
@@ -350,17 +359,16 @@ impl Device for CPU {
     }
 
     fn contiguous<T: Type>(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self> {
-        let shape = &lhs.0.shape;
-        let strides = ndarray::compact_strides(shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
-        let mut idx = Idx::new(shape);
-        loop {
-            data.push(lhs[&idx]);
-            if !idx.next() {
-                break;
-            }
+        if let Storage::CPU(lhs_data) = lhs.0.data.as_ref() {
+            let mut data = Vec::with_capacity(lhs.len());
+            let shape = lhs.0.shape.clone();
+            let strides = ndarray::compact_strides(&shape);
+            let mut idx = vec![];
+            compact(&mut idx, &shape, &lhs.0.strides, &mut data, &lhs_data[lhs.0.offset..], 0);
+            NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
+        } else {
+            panic!("Tensor Storage mismatched with Device.")
         }
-        NDArray::make(Storage::CPU(data), shape.clone(), strides, 0, Self)
     }
 
     fn data<T: Type>(lhs: &NDArray<T, Self>) -> Vec<T> {
@@ -439,5 +447,39 @@ impl<T: Type> Display for Tensor<T, CPU> {
             ending = format!("{}]", ending);
         }
         write!(f, "{ending})")
+    }
+}
+
+fn compact<T: Type>(
+    idx: &mut Vec<usize>,
+    shape: &[usize],
+    strides: &[usize],
+    data: &mut Vec<T>,
+    src: &[T],
+    dim: usize,
+) {
+    if dim == shape.len() - 1 {
+        for i in 0..shape[dim] {
+            idx.push(i);
+            let offset = idx.iter().zip(strides).fold(0, |acc, (&idx, &stride)| acc + idx * stride);
+            data.push(src[offset]);
+            idx.pop();
+        }
+    } else {
+        if strides[dim] == 0 {
+            idx.push(0);
+            compact(idx, shape, strides, data, src, dim + 1);
+            idx.pop();
+            let copied = data.clone();
+            for _ in 1..shape[dim] {
+                data.extend(&copied)
+            }
+        } else {
+            for i in 0..shape[dim] {
+                idx.push(i);
+                compact(idx, shape, strides, data, src, dim + 1);
+                idx.pop();
+            }
+        }
     }
 }
