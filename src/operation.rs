@@ -27,6 +27,10 @@ pub(crate) struct EWiseMul;
 
 pub(crate) struct MulScalar<T: Type>(pub T);
 
+pub(crate) struct EWiseSub;
+
+pub(crate) struct ScalarSub<T: Type>(pub T);
+
 pub(crate) struct EWisePow;
 
 pub(crate) struct PowScalar<T: Type>(pub T);
@@ -144,6 +148,28 @@ impl<T: Type, D: Device> Operation<T, D> for AddScalar<T> {
 
     fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad.clone()]
+    }
+}
+
+impl<T: Type, D: Device> Operation<T, D> for EWiseSub {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        apply_with_broadcast(args, |lhs, rhs| lhs - rhs)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        let inputs = &node.0.read().unwrap().inputs;
+        let in_grads = vec![out_grad.clone(), -out_grad];
+        reduce_to_shape(in_grads, inputs)
+    }
+}
+
+impl<T: Type, D: Device> Operation<T, D> for ScalarSub<T> {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].scalar_sub(self.0)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        vec![-out_grad]
     }
 }
 

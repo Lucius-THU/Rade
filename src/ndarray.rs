@@ -1,7 +1,7 @@
 use crate::device::Device;
 use crate::type_trait::{Float, Type};
 use num_traits::Pow;
-use std::ops::{Add, Div, Mul};
+use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
 
 pub enum Storage<T> {
@@ -49,6 +49,10 @@ impl<T: Type, D: Device> NDArray<T, D> {
 
     pub(crate) fn ndim(&self) -> usize {
         self.0.shape.len()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.shape.iter().product()
     }
 
     /// Broadcast the `NDArray` to the given `shape`.
@@ -125,6 +129,10 @@ impl<T: Type, D: Device> NDArray<T, D> {
         ret
     }
 
+    pub fn scalar_sub(&self, rhs: T) -> Self {
+        self.0.device.scalar_sub(self, rhs)
+    }
+
     pub fn scalar_div(&self, rhs: T) -> Self {
         self.0.device.scalar_div(self, rhs)
     }
@@ -183,6 +191,14 @@ impl<T: Type, D: Device> Add<T> for &NDArray<T, D> {
 
     fn add(self, rhs: T) -> Self::Output {
         self.0.device.add_scalar(self, rhs)
+    }
+}
+
+impl<T: Type, D: Device> Sub for &NDArray<T, D> {
+    type Output = NDArray<T, D>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.0.device.sub(self, rhs)
     }
 }
 

@@ -1,16 +1,16 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::operation::{
-    AddScalar, Broadcast, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, Equal, GTScalar, Ln,
-    Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarDiv, Sqrt,
-    Summation, Transpose,
+    AddScalar, Broadcast, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, EWiseSub, Equal,
+    GTScalar, Ln, Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarDiv,
+    ScalarSub, Sqrt, Summation, Transpose,
 };
 use crate::type_trait::{Float, Len, Signed, Type, Unsigned};
 use bincode::de::Decoder;
 use bincode::enc::Encoder;
 use bincode::error::{DecodeError, EncodeError};
 use bincode::{Decode, Encode};
-use num_traits::{One, Pow, Zero};
+use num_traits::Pow;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -312,7 +312,7 @@ impl<T: Type, D: Device> Sub for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        self + &(rhs * (T::zero() - T::one()))
+        Tensor::calc(EWiseSub, vec![self.clone(), rhs.clone()])
     }
 }
 
@@ -442,7 +442,7 @@ macro_rules! impl_sub {
                 type Output = Tensor<$t, D>;
 
                 fn sub(self, rhs: &Tensor<$t, D>) -> Self::Output {
-                    self + &(rhs * (<$t as Zero>::zero() - <$t as One>::one()))
+                    Tensor::calc(ScalarSub(self), vec![rhs.clone()])
                 }
             }
         )*

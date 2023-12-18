@@ -25,7 +25,7 @@ impl CPU {
         rhs: U,
         op: impl Fn(T, U) -> T,
     ) -> NDArray<T, Self> {
-        if let Storage::CPU(lhs_data) = &lhs.0.data.as_ref() {
+        if let Storage::CPU(lhs_data) = lhs.0.data.as_ref() {
             let data = lhs_data[lhs.0.offset..]
                 .iter()
                 .map(|&x| op(x, rhs))
@@ -57,9 +57,10 @@ impl CPU {
         if let (Storage::CPU(lhs_data), Storage::CPU(rhs_data)) =
             (lhs.0.data.as_ref(), rhs.0.data.as_ref())
         {
-            let data = lhs_data[lhs.0.offset..]
+            let len = lhs.len();
+            let data = lhs_data[lhs.0.offset..lhs.0.offset + len]
                 .iter()
-                .zip(&rhs_data[rhs.0.offset..])
+                .zip(&rhs_data[rhs.0.offset..rhs.0.offset + len])
                 .map(|(&x, &y)| op(x, y))
                 .collect::<Vec<_>>();
             NDArray::make(
@@ -83,21 +84,20 @@ impl CPU {
         op: impl Fn(T, T) -> T,
     ) -> NDArray<T, Self> {
         let strides = ndarray::compact_strides(&shape);
-        let mut data = Vec::with_capacity(shape[0] * strides[0]);
+        let len = shape[0] * strides[0];
         let mut idx = Idx::new(&lhs.0.shape);
         let reduce_lens = idx.shape[reduce_dims..lhs.ndim()].iter().product::<usize>();
-        loop {
-            let mut acc = init;
-            let mut stop = false;
-            for _ in 0..reduce_lens {
-                acc = op(acc, lhs[&idx]);
-                stop = !idx.next();
-            }
-            data.push(acc);
-            if stop {
-                break;
-            }
-        }
+        let data = (0..len)
+            .into_iter()
+            .map(|_| {
+                let mut acc = init;
+                for _ in 0..reduce_lens {
+                    acc = op(acc, lhs[&idx]);
+                    idx.next();
+                }
+                acc
+            })
+            .collect::<Vec<_>>();
         NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
     }
 }
@@ -141,18 +141,14 @@ impl Device for CPU {
         indices: &NDArray<U, Self>,
         num_classes: usize,
     ) -> NDArray<T, Self> {
-        let mut shape = indices.0.shape.clone();
-        let strides = ndarray::compact_strides(&shape);
-        let mut data = vec![T::zero(); shape[0] * strides[0] * num_classes];
-        let mut idx = Idx::new(&shape);
-        let mut i = 0;
-        loop {
+        let len = indices.len();
+        let mut data = vec![T::zero(); len * num_classes];
+        let mut idx = Idx::new(&indices.0.shape);
+        for i in 0..len {
             data[i * num_classes + indices[&idx].to_usize().unwrap()] = T::one();
-            i += 1;
-            if !idx.next() {
-                break;
-            }
+            idx.next();
         }
+        let mut shape = idx.shape;
         shape.push(num_classes);
         let strides = ndarray::compact_strides(&shape);
         NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
@@ -179,8 +175,16 @@ impl Device for CPU {
         self.ewise_op(lhs, rhs, |x, y| x + y)
     }
 
+    fn sub<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
+        self.ewise_op(lhs, rhs, |x, y| x - y)
+    }
+
     fn add_scalar<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
         self.scalar_op(lhs, rhs, |x, y| x + y)
+    }
+
+    fn scalar_sub<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: T) -> NDArray<T, Self> {
+        self.scalar_op(lhs, rhs, |x, y| y - x)
     }
 
     fn mul<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
@@ -360,7 +364,7 @@ impl Device for CPU {
     }
 
     fn data<T: Type>(lhs: &NDArray<T, Self>) -> Vec<T> {
-        if let Storage::CPU(data) = &lhs.0.data.as_ref() {
+        if let Storage::CPU(data) = lhs.0.data.as_ref() {
             data.clone()
         } else {
             panic!("Tensor Storage mismatched with Device")
@@ -371,7 +375,7 @@ impl Device for CPU {
         encoder: &mut E,
         lhs: &NDArray<T, Self>,
     ) -> Result<(), EncodeError> {
-        if let Storage::CPU(data) = &lhs.0.data.as_ref() {
+        if let Storage::CPU(data) = lhs.0.data.as_ref() {
             Encode::encode(data, encoder)?;
             Encode::encode(&lhs.0.shape, encoder)?;
             Ok(())
@@ -394,12 +398,12 @@ impl<T: Type> Index<&Idx> for NDArray<T, CPU> {
     type Output = T;
 
     fn index(&self, index: &Idx) -> &Self::Output {
-        let mut idx = self.0.offset;
-        for (dim, stride) in index.idx.iter().zip(&self.0.strides) {
-            idx += dim * stride;
-        }
-        if let Storage::CPU(data) = &self.0.data.as_ref() {
-            &data[idx]
+        if let Storage::CPU(data) = self.0.data.as_ref() {
+            &data[index
+                .idx
+                .iter()
+                .zip(&self.0.strides)
+                .fold(self.0.offset, |acc, (idx, dim)| acc + idx * dim)]
         } else {
             panic!("Tensor Storage mismatched with Device.")
         }
