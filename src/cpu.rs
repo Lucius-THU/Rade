@@ -364,7 +364,14 @@ impl Device for CPU {
             let shape = lhs.0.shape.clone();
             let strides = ndarray::compact_strides(&shape);
             let mut idx = vec![];
-            compact(&mut idx, &shape, &lhs.0.strides, &mut data, &lhs_data[lhs.0.offset..], 0);
+            compact(
+                &mut idx,
+                &shape,
+                &lhs.0.strides,
+                &mut data,
+                &lhs_data[lhs.0.offset..],
+                0,
+            );
             NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
         } else {
             panic!("Tensor Storage mismatched with Device.")
@@ -461,7 +468,10 @@ fn compact<T: Type>(
     if dim == shape.len() - 1 {
         for i in 0..shape[dim] {
             idx.push(i);
-            let offset = idx.iter().zip(strides).fold(0, |acc, (&idx, &stride)| acc + idx * stride);
+            let offset = idx
+                .iter()
+                .zip(strides)
+                .fold(0, |acc, (&idx, &stride)| acc + idx * stride);
             data.push(src[offset]);
             idx.pop();
         }

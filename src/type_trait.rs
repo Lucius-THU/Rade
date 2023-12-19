@@ -6,7 +6,7 @@ use bincode::{Decode, Encode};
 use num_traits::{Bounded, Num, Pow, ToPrimitive};
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
-use std::ops::{Add, AddAssign, Index};
+use std::ops::{AddAssign, Index, MulAssign};
 
 pub trait Type:
     'static
@@ -20,8 +20,8 @@ pub trait Type:
     + Copy
     + Display
     + PartialOrd
-    + Add<Output = Self>
     + AddAssign
+    + MulAssign
     + Ops
 {
     fn atol() -> Self {
