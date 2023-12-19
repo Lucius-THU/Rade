@@ -438,10 +438,17 @@ fn reduce_to_shape<T: Type, D: Device>(
     grads
 }
 
-fn reduce_by_add<T: Type, D: Device>(input: &Tensor<T, D>, output_shape: &[usize]) -> Tensor<T, D> {
+pub fn reduce_by_add<T: Type, D: Device>(
+    input: &Tensor<T, D>,
+    output_shape: &[usize],
+) -> Tensor<T, D> {
     let input_shape = input.shape();
     let n = input_shape.len() - output_shape.len();
-    let sum = input.sum(Some((0..n).collect::<Vec<_>>()), false);
+    let sum = if n > 0 {
+        input.sum(Some((0..n).collect::<Vec<_>>()), false)
+    } else {
+        input.clone()
+    };
     let mut reduced_axes = vec![];
     for i in n..input_shape.len() {
         if input_shape[i] != output_shape[i - n] {

@@ -79,14 +79,13 @@ impl CPU {
         &self,
         lhs: &NDArray<T, Self>,
         shape: Vec<usize>,
-        reduce_dims: usize,
         init: T,
         op: impl Fn(T, T) -> T,
     ) -> NDArray<T, Self> {
         let strides = ndarray::compact_strides(&shape);
         let len = shape[0] * strides[0];
         let mut idx = Idx::new(&lhs.0.shape);
-        let reduce_lens = idx.shape[reduce_dims..lhs.ndim()].iter().product::<usize>();
+        let reduce_lens = lhs.len() / len;
         let data = (0..len)
             .into_iter()
             .map(|_| {
@@ -330,28 +329,12 @@ impl Device for CPU {
         NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
     }
 
-    fn sum<T: Type>(
-        &self,
-        lhs: &NDArray<T, Self>,
-        shape: Vec<usize>,
-        reduce_dims: usize,
-    ) -> NDArray<T, Self> {
-        self.reduce_op(lhs, shape, reduce_dims, T::zero(), |x, y| x + y)
+    fn sum<T: Type>(&self, lhs: &NDArray<T, Self>, shape: Vec<usize>) -> NDArray<T, Self> {
+        self.reduce_op(lhs, shape, T::zero(), |x, y| x + y)
     }
 
-    fn max<T: Type>(
-        &self,
-        lhs: &NDArray<T, Self>,
-        shape: Vec<usize>,
-        reduce_dims: usize,
-    ) -> NDArray<T, Self> {
-        self.reduce_op(lhs, shape, reduce_dims, T::min_value(), |x, y| {
-            if x > y {
-                x
-            } else {
-                y
-            }
-        })
+    fn max<T: Type>(&self, lhs: &NDArray<T, Self>, shape: Vec<usize>) -> NDArray<T, Self> {
+        self.reduce_op(lhs, shape, T::min_value(), |x, y| if x > y { x } else { y })
     }
 
     fn equal<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self> {
@@ -466,14 +449,27 @@ fn compact<T: Type>(
     dim: usize,
 ) {
     if dim == shape.len() - 1 {
-        for i in 0..shape[dim] {
-            idx.push(i);
+        if strides[dim] == 0 {
+            idx.push(0);
             let offset = idx
                 .iter()
                 .zip(strides)
                 .fold(0, |acc, (&idx, &stride)| acc + idx * stride);
-            data.push(src[offset]);
+            let element = src[offset];
             idx.pop();
+            for _ in 0..shape[dim] {
+                data.push(element);
+            }
+        } else {
+            for i in 0..shape[dim] {
+                idx.push(i);
+                let offset = idx
+                    .iter()
+                    .zip(strides)
+                    .fold(0, |acc, (&idx, &stride)| acc + idx * stride);
+                data.push(src[offset]);
+                idx.pop();
+            }
         }
     } else {
         if strides[dim] == 0 {

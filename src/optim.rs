@@ -174,7 +174,8 @@ impl<'a, T: Float, D: Device> Optimizer<T, D> for AdamW<T, D> {
             let grad = parameter.grad().unwrap().detach(false);
             if self.u.len() <= i {
                 self.u.push((&grad * (T::one() - self.beta1)).detach(false));
-                self.v .push((&(&grad * &grad) * (T::one() - self.beta2)).detach(false));
+                self.v
+                    .push((&(&grad * &grad) * (T::one() - self.beta2)).detach(false));
             } else {
                 self.u[i] =
                     (&(&self.u[i] * self.beta1) + &(&grad * (T::one() - self.beta1))).detach(false);
@@ -184,7 +185,11 @@ impl<'a, T: Float, D: Device> Optimizer<T, D> for AdamW<T, D> {
             }
             let u = &self.u[i] / bias1;
             let v = &self.v[i] / bias2;
-            parameter.set_data(parameter - &(&(&(&u * self.lr) / &(&v.sqrt() + self.eps)) + &(parameter * self.weight_decay)));
+            parameter.set_data(
+                parameter
+                    - &(&(&(&u * self.lr) / &(&v.sqrt() + self.eps))
+                        + &(parameter * self.weight_decay)),
+            );
         }
     }
 }

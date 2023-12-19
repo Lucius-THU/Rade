@@ -108,13 +108,13 @@ impl<T: Type, D: Device> NDArray<T, D> {
     pub fn sum(&self, axis: Option<Vec<usize>>, keep_dims: bool) -> Self {
         let axis = axis.unwrap_or((0..self.ndim()).collect::<Vec<_>>());
         let (perm, shape) = self.reduce_axes(&axis, keep_dims);
-        self.0.device.sum(&perm, shape, self.ndim() - axis.len())
+        self.0.device.sum(&perm, shape)
     }
 
     pub fn max(&self, axis: Option<Vec<usize>>, keep_dims: bool) -> Self {
         let axis = axis.unwrap_or((0..self.ndim()).collect::<Vec<_>>());
         let (perm, shape) = self.reduce_axes(&axis, keep_dims);
-        self.0.device.max(&perm, shape, self.ndim() - axis.len())
+        self.0.device.max(&perm, shape)
     }
 
     pub fn reshape(&self, shape: &[usize]) -> Self {

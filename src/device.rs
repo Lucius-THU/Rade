@@ -67,19 +67,9 @@ pub trait Device: Clone {
 
     fn matmul<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self>;
 
-    fn sum<T: Type>(
-        &self,
-        lhs: &NDArray<T, Self>,
-        shape: Vec<usize>,
-        reduce_dims: usize,
-    ) -> NDArray<T, Self>;
+    fn sum<T: Type>(&self, lhs: &NDArray<T, Self>, shape: Vec<usize>) -> NDArray<T, Self>;
 
-    fn max<T: Type>(
-        &self,
-        lhs: &NDArray<T, Self>,
-        shape: Vec<usize>,
-        reduce_dims: usize,
-    ) -> NDArray<T, Self>;
+    fn max<T: Type>(&self, lhs: &NDArray<T, Self>, shape: Vec<usize>) -> NDArray<T, Self>;
 
     fn equal<T: Type>(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self>;
 
