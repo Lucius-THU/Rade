@@ -13,7 +13,7 @@ use std::fmt::{self, Display, Formatter};
 use std::ops::Index;
 use std::slice;
 
-pub(crate) mod ops;
+pub(crate) mod tile;
 
 #[derive(Clone)]
 pub struct CPU;
@@ -89,12 +89,11 @@ impl CPU {
         let data = (0..len)
             .into_iter()
             .map(|_| {
-                let mut acc = init;
-                for _ in 0..reduce_lens {
-                    acc = op(acc, lhs[&idx]);
+                (0..reduce_lens).into_iter().fold(init, |acc, _| {
+                    let n = op(acc, lhs[&idx]);
                     idx.next();
-                }
-                acc
+                    n
+                })
             })
             .collect::<Vec<_>>();
         NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
@@ -308,19 +307,13 @@ impl Device for CPU {
                 for n in (0..dims[2]).step_by(tile) {
                     let c = min(tile, dims[2] - n);
                     let inner_offset = outer_offset + m_offset + n;
-                    for v in (0..dims[1]).step_by(tile) {
-                        let t1 = v * tile;
-                        let t2 = (v + tile) * tile;
-                        let offset = n * tiled_dims[1];
-                        let tile_lhs = &temp_lhs[t1..t2];
-                        let tile_rhs = &temp_rhs[t1 + offset..t2 + offset];
-                        let temp_ans = T::tiled_matmul(tile_lhs, tile_rhs);
-                        for i in 0..r {
-                            let i_offset = i * tile;
-                            let x_inner = inner_offset + i * dims[2];
-                            for j in 0..c {
-                                data[x_inner + j] += temp_ans[i_offset + j];
-                            }
+                    let offset = n * tiled_dims[1];
+                    let out = T::tiled_matmul(&temp_lhs, &temp_rhs[offset..], dims[1]);
+                    for i in 0..r {
+                        let i_offset = i * tile;
+                        let x_inner = inner_offset + i * dims[2];
+                        for j in 0..c {
+                            data[x_inner + j] = out[i_offset + j];
                         }
                     }
                 }

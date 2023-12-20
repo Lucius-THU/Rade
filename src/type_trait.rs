@@ -1,4 +1,4 @@
-use crate::cpu::ops::Ops;
+use crate::cpu::tile::Tile;
 use crate::device::Device;
 use crate::operation::ScalarPow;
 use crate::tensor::Tensor;
@@ -22,7 +22,7 @@ pub trait Type:
     + PartialOrd
     + AddAssign
     + MulAssign
-    + Ops
+    + Tile
 {
     fn atol() -> Self {
         Self::zero()
@@ -57,7 +57,7 @@ macro_rules! impl_type {
     };
 }
 
-impl_type!(usize, u8, u16, u32, u64, u128, isize, i8, i16, i32, i64, i128);
+impl_type!(usize, u8, u16, u32, u64, isize, i8, i16, i32, i64);
 
 pub trait Len<T>: Index<usize, Output = T> {
     fn ptr(&self) -> *mut T;

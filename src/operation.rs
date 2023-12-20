@@ -258,7 +258,6 @@ impl_pow_scalar!(i8, u32);
 impl_pow_scalar!(i16, u32);
 impl_pow_scalar!(i32, u32);
 impl_pow_scalar!(i64, u32);
-impl_pow_scalar!(i128, u32);
 
 impl<T: Signed, D: Device> Operation<T, D> for EWiseDiv {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {

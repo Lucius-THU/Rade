@@ -384,7 +384,7 @@ macro_rules! impl_div {
     };
 }
 
-impl_div!(isize, i8, i16, i32, i64, i128, f32, f64);
+impl_div!(isize, i8, i16, i32, i64, f32, f64);
 
 macro_rules! impl_pow_scalar {
     ($t:ty, $u:ty) => {
@@ -405,7 +405,6 @@ impl_pow_scalar!(i8, u32);
 impl_pow_scalar!(i16, u32);
 impl_pow_scalar!(i32, u32);
 impl_pow_scalar!(i64, u32);
-impl_pow_scalar!(i128, u32);
 
 macro_rules! impl_add {
     ($($t:ty),*) => {
@@ -449,11 +448,11 @@ macro_rules! impl_sub {
     };
 }
 
-impl_add!(isize, i8, i16, i32, i64, i128, f32, f64);
+impl_add!(isize, i8, i16, i32, i64, f32, f64);
 
-impl_mul!(isize, i8, i16, i32, i64, i128, f32, f64);
+impl_mul!(isize, i8, i16, i32, i64, f32, f64);
 
-impl_sub!(isize, i8, i16, i32, i64, i128, f32, f64);
+impl_sub!(isize, i8, i16, i32, i64, f32, f64);
 
 impl<T: Type, D: Device> Encode for Tensor<T, D> {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
