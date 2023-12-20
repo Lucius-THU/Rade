@@ -474,9 +474,10 @@ fn compact<T: Type>(
     } else {
         if strides[dim] == 0 {
             idx.push(0);
+            let len = data.len();
             compact(idx, shape, strides, data, src, dim + 1);
             idx.pop();
-            let copied = data.clone();
+            let copied = data[len..].to_vec();
             for _ in 1..shape[dim] {
                 data.extend(&copied)
             }

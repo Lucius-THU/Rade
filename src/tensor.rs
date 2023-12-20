@@ -683,4 +683,24 @@ mod tests {
                 )
         );
     }
+
+    #[test]
+    fn test_compact() {
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], true);
+        let b = a.broadcast(&[3, 2, 3]).transpose(Some((1, 0)));
+        let c = Tensor::make(
+            Some(
+                b.0.write()
+                    .unwrap()
+                    .cached_data
+                    .as_ref()
+                    .unwrap()
+                    .contiguous(),
+            ),
+            vec![],
+            None,
+            true,
+        );
+        assert!(b == c);
+    }
 }
