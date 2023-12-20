@@ -305,17 +305,15 @@ impl Device for CPU {
                     }
                 }
                 for n in (0..dims[2]).step_by(tile) {
-                    let c = min(tile, dims[2] - n);
-                    let inner_offset = outer_offset + m_offset + n;
-                    let offset = n * tiled_dims[1];
-                    let out = T::tiled_matmul(&temp_lhs, &temp_rhs[offset..], dims[1]);
-                    for i in 0..r {
-                        let i_offset = i * tile;
-                        let x_inner = inner_offset + i * dims[2];
-                        for j in 0..c {
-                            data[x_inner + j] = out[i_offset + j];
-                        }
-                    }
+                    T::tiled_matmul(
+                        &temp_lhs,
+                        &temp_rhs[n * tiled_dims[1]..],
+                        &mut data[outer_offset + m_offset + n..],
+                        dims[1],
+                        dims[2],
+                        r,
+                        min(tile, dims[2] - n),
+                    );
                 }
             }
         }

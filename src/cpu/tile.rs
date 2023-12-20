@@ -4,7 +4,15 @@ use std::simd::Simd;
 pub trait Tile: Sized {
     const LANES: usize;
 
-    fn tiled_matmul(lhs: &[Self], rhs: &[Self], m: usize) -> Vec<Self>;
+    fn tiled_matmul(
+        lhs: &[Self],
+        rhs: &[Self],
+        out: &mut [Self],
+        m: usize,
+        k: usize,
+        r: usize,
+        c: usize,
+    );
 }
 
 macro_rules! impl_tile {
@@ -13,9 +21,9 @@ macro_rules! impl_tile {
             impl Tile for $t {
                 const LANES: usize = 8;
 
-                fn tiled_matmul(lhs: &[$t], rhs: &[$t], m: usize) -> Vec<$t> {
+                fn tiled_matmul(lhs: &[$t], rhs: &[$t], out: &mut [$t], m: usize, k: usize, r: usize, c: usize) {
                     let tile = Self::LANES;
-                    let mut out = vec![Simd::<$t, { Self::LANES }>::splat(<$t as Zero>::zero()); tile];
+                    let mut temp = vec![Simd::<$t, { Self::LANES }>::splat(<$t as Zero>::zero()); tile];
                     for k in (0..m).step_by(tile) {
                         let t1 = k * tile;
                         let t2 = (k + tile) * tile;
@@ -27,15 +35,13 @@ macro_rules! impl_tile {
                             for i in 0..tile {
                                 let i_offset = i * tile;
                                 let lhs_simd = Simd::<$t, { Self::LANES }>::splat(tile_lhs[i_offset + j]);
-                                out[i] += lhs_simd * rhs_simd;
+                                temp[i] += lhs_simd * rhs_simd;
                             }
                         }
                     }
-                    let mut ans = Vec::with_capacity(tile * tile);
-                    for i in 0..tile {
-                        ans.extend_from_slice(out[i].as_array());
+                    for i in 0..r {
+                        out[i * k..i * k + c].copy_from_slice(&temp[i][..c]);
                     }
-                    ans
                 }
             }
         )*
