@@ -2,7 +2,7 @@ use crate::device::Device;
 use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type};
 
-pub trait Optimizer<T: Type, D: Device> {
+pub trait Optimizer<T: Type, D: Device<T>> {
     fn parameters(&self) -> &[Tensor<T, D>];
     fn step(&mut self);
     fn zero_grad(&self) {
@@ -12,7 +12,7 @@ pub trait Optimizer<T: Type, D: Device> {
     }
 }
 
-pub struct SGD<T: Type, D: Device> {
+pub struct SGD<T: Type, D: Device<T>> {
     parameters: Vec<Tensor<T, D>>,
     lr: T,
     momentum: T,
@@ -20,7 +20,7 @@ pub struct SGD<T: Type, D: Device> {
     u: Vec<Tensor<T, D>>,
 }
 
-pub struct Adam<T: Float, D: Device> {
+pub struct Adam<T: Float, D: Device<T>> {
     parameters: Vec<Tensor<T, D>>,
     lr: T,
     beta1: T,
@@ -33,7 +33,7 @@ pub struct Adam<T: Float, D: Device> {
     running_bata2: T,
 }
 
-pub struct AdamW<T: Float, D: Device> {
+pub struct AdamW<T: Float, D: Device<T>> {
     parameters: Vec<Tensor<T, D>>,
     lr: T,
     beta1: T,
@@ -46,7 +46,7 @@ pub struct AdamW<T: Float, D: Device> {
     running_bata2: T,
 }
 
-impl<T: Type, D: Device> SGD<T, D> {
+impl<T: Type, D: Device<T>> SGD<T, D> {
     pub fn new(parameters: Vec<Tensor<T, D>>, lr: T, momentum: T, weight_decay: T) -> Self {
         let len = parameters.len();
         Self {
@@ -59,7 +59,7 @@ impl<T: Type, D: Device> SGD<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Optimizer<T, D> for SGD<T, D> {
+impl<T: Type, D: Device<T>> Optimizer<T, D> for SGD<T, D> {
     fn parameters(&self) -> &[Tensor<T, D>] {
         &self.parameters
     }
@@ -79,7 +79,7 @@ impl<T: Type, D: Device> Optimizer<T, D> for SGD<T, D> {
     }
 }
 
-impl<T: Float, D: Device> Adam<T, D> {
+impl<T: Float, D: Device<T>> Adam<T, D> {
     pub fn new(
         parameters: Vec<Tensor<T, D>>,
         lr: T,
@@ -104,7 +104,7 @@ impl<T: Float, D: Device> Adam<T, D> {
     }
 }
 
-impl<'a, T: Float, D: Device> Optimizer<T, D> for Adam<T, D> {
+impl<'a, T: Float, D: Device<T>> Optimizer<T, D> for Adam<T, D> {
     fn parameters(&self) -> &[Tensor<T, D>] {
         &self.parameters
     }
@@ -135,7 +135,7 @@ impl<'a, T: Float, D: Device> Optimizer<T, D> for Adam<T, D> {
     }
 }
 
-impl<T: Float, D: Device> AdamW<T, D> {
+impl<T: Float, D: Device<T>> AdamW<T, D> {
     pub fn new(
         parameters: Vec<Tensor<T, D>>,
         lr: T,
@@ -160,7 +160,7 @@ impl<T: Float, D: Device> AdamW<T, D> {
     }
 }
 
-impl<'a, T: Float, D: Device> Optimizer<T, D> for AdamW<T, D> {
+impl<'a, T: Float, D: Device<T>> Optimizer<T, D> for AdamW<T, D> {
     fn parameters(&self) -> &[Tensor<T, D>] {
         &self.parameters
     }

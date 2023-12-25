@@ -9,3 +9,4 @@ edition = "2021"
 num-traits = "0.2.17"
 rand = "0.8.5"
 bincode = "2.0.0-rc.3"
+blas-src = { version = "0.9.0", features = ["accelerate"] }

@@ -4,9 +4,9 @@ use crate::type_trait::{Float, Unsigned};
 
 /// Computes the cross entropy loss between `logits` and `labels`.
 /// **Warning**: `logits` should have the shape `[batch_size, num_classes]` and `labels` should have the shape `[batch_size]`.
-pub fn cross_entropy_loss<T: Float, U: Unsigned, D: Device>(
+pub fn cross_entropy_loss<T: Float, U: Unsigned, D: Device<T>, E: Device<U>>(
     logits: &Tensor<T, D>,
-    labels: &Tensor<U, D>,
+    labels: &Tensor<U, E>,
 ) -> Tensor<T, D> {
     let mut shape = logits.shape();
     let num_classes = shape.pop().unwrap();
@@ -20,9 +20,9 @@ pub fn cross_entropy_loss<T: Float, U: Unsigned, D: Device>(
     &loss.sum(None, false) / T::from(batch).unwrap()
 }
 
-pub fn top1_accuracy<T: Float, U: Unsigned, D: Device>(
+pub fn top1_accuracy<T: Float, U: Unsigned, D: Device<T>, E: Device<U>>(
     logits: &Tensor<T, D>,
-    labels: &Tensor<U, D>,
+    labels: &Tensor<U, E>,
 ) -> T {
     let mut shape = logits.shape();
     let num_classes = shape.pop().unwrap();

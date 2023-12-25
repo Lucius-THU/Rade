@@ -5,7 +5,7 @@ use crate::type_trait::{Float, Signed, Type};
 use num_traits::{One, Pow};
 use std::ops::Div;
 
-pub(crate) trait Operation<T: Type, D: Device> {
+pub(crate) trait Operation<T: Type, D: Device<T>> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D>;
 
     /// Reversed automatic differentiation implementation.
@@ -59,7 +59,7 @@ pub(crate) struct Max(pub Option<Vec<usize>>, pub bool);
 
 pub(crate) struct Equal;
 
-impl<T: Type, D: Device> Operation<T, D> for Broadcast {
+impl<T: Type, D: Device<T>> Operation<T, D> for Broadcast {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].broadcast(&self.0)
     }
@@ -69,7 +69,7 @@ impl<T: Type, D: Device> Operation<T, D> for Broadcast {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for Summation {
+impl<T: Type, D: Device<T>> Operation<T, D> for Summation {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].sum(self.0.clone(), self.1)
     }
@@ -88,7 +88,7 @@ impl<T: Type, D: Device> Operation<T, D> for Summation {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for Max {
+impl<T: Type, D: Device<T>> Operation<T, D> for Max {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].max(self.0.clone(), self.1)
     }
@@ -109,7 +109,7 @@ impl<T: Type, D: Device> Operation<T, D> for Max {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for Reshape {
+impl<T: Type, D: Device<T>> Operation<T, D> for Reshape {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].reshape(&self.0)
     }
@@ -119,7 +119,7 @@ impl<T: Type, D: Device> Operation<T, D> for Reshape {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for Equal {
+impl<T: Type, D: Device<T>> Operation<T, D> for Equal {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs.equal(rhs))
     }
@@ -129,7 +129,7 @@ impl<T: Type, D: Device> Operation<T, D> for Equal {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for EWiseAdd {
+impl<T: Type, D: Device<T>> Operation<T, D> for EWiseAdd {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs + rhs)
     }
@@ -141,7 +141,7 @@ impl<T: Type, D: Device> Operation<T, D> for EWiseAdd {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for AddScalar<T> {
+impl<T: Type, D: Device<T>> Operation<T, D> for AddScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         &args[0] + self.0
     }
@@ -151,7 +151,7 @@ impl<T: Type, D: Device> Operation<T, D> for AddScalar<T> {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for EWiseSub {
+impl<T: Type, D: Device<T>> Operation<T, D> for EWiseSub {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs - rhs)
     }
@@ -163,7 +163,7 @@ impl<T: Type, D: Device> Operation<T, D> for EWiseSub {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for ScalarSub<T> {
+impl<T: Type, D: Device<T>> Operation<T, D> for ScalarSub<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].scalar_sub(self.0)
     }
@@ -173,7 +173,7 @@ impl<T: Type, D: Device> Operation<T, D> for ScalarSub<T> {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for EWiseMul {
+impl<T: Type, D: Device<T>> Operation<T, D> for EWiseMul {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs * rhs)
     }
@@ -185,7 +185,7 @@ impl<T: Type, D: Device> Operation<T, D> for EWiseMul {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for MulScalar<T> {
+impl<T: Type, D: Device<T>> Operation<T, D> for MulScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         &args[0] * self.0
     }
@@ -195,7 +195,7 @@ impl<T: Type, D: Device> Operation<T, D> for MulScalar<T> {
     }
 }
 
-impl<T: Float, D: Device> Operation<T, D> for EWisePow {
+impl<T: Float, D: Device<T>> Operation<T, D> for EWisePow {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs.pow(rhs))
     }
@@ -210,7 +210,7 @@ impl<T: Float, D: Device> Operation<T, D> for EWisePow {
     }
 }
 
-impl<D: Device, T: Float> Operation<T, D> for ScalarPow<T> {
+impl<D: Device<T>, T: Float> Operation<T, D> for ScalarPow<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].scalar_pow(self.0)
     }
@@ -221,7 +221,7 @@ impl<D: Device, T: Float> Operation<T, D> for ScalarPow<T> {
     }
 }
 
-impl<T: Float, D: Device> Operation<T, D> for PowScalar<T> {
+impl<T: Float, D: Device<T>> Operation<T, D> for PowScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].pow(self.0)
     }
@@ -234,7 +234,7 @@ impl<T: Float, D: Device> Operation<T, D> for PowScalar<T> {
 
 macro_rules! impl_pow_scalar {
     ($t:ty, $u:ty) => {
-        impl<D: Device> Operation<$t, D> for PowScalar<$u> {
+        impl<D: Device<$t>> Operation<$t, D> for PowScalar<$u> {
             fn compute(&self, args: &[NDArray<$t, D>]) -> NDArray<$t, D> {
                 args[0].pow(self.0)
             }
@@ -259,7 +259,7 @@ impl_pow_scalar!(i16, u32);
 impl_pow_scalar!(i32, u32);
 impl_pow_scalar!(i64, u32);
 
-impl<T: Signed, D: Device> Operation<T, D> for EWiseDiv {
+impl<T: Signed, D: Device<T>> Operation<T, D> for EWiseDiv {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         apply_with_broadcast(args, |lhs, rhs| lhs.div(rhs))
     }
@@ -274,7 +274,7 @@ impl<T: Signed, D: Device> Operation<T, D> for EWiseDiv {
     }
 }
 
-impl<T: Signed, D: Device> Operation<T, D> for DivScalar<T> {
+impl<T: Signed, D: Device<T>> Operation<T, D> for DivScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].div(self.0)
     }
@@ -284,7 +284,7 @@ impl<T: Signed, D: Device> Operation<T, D> for DivScalar<T> {
     }
 }
 
-impl<D: Device, T: Signed> Operation<T, D> for ScalarDiv<T> {
+impl<D: Device<T>, T: Signed> Operation<T, D> for ScalarDiv<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].scalar_div(self.0)
     }
@@ -295,7 +295,7 @@ impl<D: Device, T: Signed> Operation<T, D> for ScalarDiv<T> {
     }
 }
 
-impl<T: Float, D: Device> Operation<T, D> for Ln {
+impl<T: Float, D: Device<T>> Operation<T, D> for Ln {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].ln()
     }
@@ -305,7 +305,7 @@ impl<T: Float, D: Device> Operation<T, D> for Ln {
     }
 }
 
-impl<T: Float, D: Device> Operation<T, D> for Sqrt {
+impl<T: Float, D: Device<T>> Operation<T, D> for Sqrt {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].sqrt()
     }
@@ -315,7 +315,7 @@ impl<T: Float, D: Device> Operation<T, D> for Sqrt {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for Transpose {
+impl<T: Type, D: Device<T>> Operation<T, D> for Transpose {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         let len = args[0].ndim();
         if len < 2 {
@@ -335,7 +335,7 @@ impl<T: Type, D: Device> Operation<T, D> for Transpose {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for MaximumScalar<T> {
+impl<T: Type, D: Device<T>> Operation<T, D> for MaximumScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].max_scalar(self.0)
     }
@@ -345,7 +345,7 @@ impl<T: Type, D: Device> Operation<T, D> for MaximumScalar<T> {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for GTScalar<T> {
+impl<T: Type, D: Device<T>> Operation<T, D> for GTScalar<T> {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].gt_scalar(self.0)
     }
@@ -355,7 +355,7 @@ impl<T: Type, D: Device> Operation<T, D> for GTScalar<T> {
     }
 }
 
-impl<T: Type, D: Device> Operation<T, D> for Matmul {
+impl<T: Type, D: Device<T>> Operation<T, D> for Matmul {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         let mut lhs = &args[0];
         let mut rhs = &args[1];
@@ -424,20 +424,25 @@ fn broadcast_shapes(lhs: &[usize], rhs: &[usize]) -> Vec<usize> {
     }
 }
 
-fn reduce_to_shape<T: Type, D: Device>(
-    mut grads: Vec<Tensor<T, D>>,
+fn reduce_to_shape<T: Type, D: Device<T>>(
+    grads: Vec<Tensor<T, D>>,
     inputs: &[Tensor<T, D>],
 ) -> Vec<Tensor<T, D>> {
-    for i in 0..inputs.len() {
-        let input_shape = inputs[i].shape();
-        if input_shape != grads[i].shape() {
-            grads[i] = reduce_by_add(&grads[i], &input_shape);
-        }
-    }
     grads
+        .iter()
+        .zip(inputs)
+        .map(|(grad, input)| {
+            let input_shape = input.shape();
+            if input_shape != grad.shape() {
+                reduce_by_add(grad, &input_shape)
+            } else {
+                grad.clone()
+            }
+        })
+        .collect()
 }
 
-pub fn reduce_by_add<T: Type, D: Device>(
+pub fn reduce_by_add<T: Type, D: Device<T>>(
     input: &Tensor<T, D>,
     output_shape: &[usize],
 ) -> Tensor<T, D> {
@@ -461,7 +466,7 @@ pub fn reduce_by_add<T: Type, D: Device>(
     }
 }
 
-fn apply_with_broadcast<T: Type, D: Device>(
+fn apply_with_broadcast<T: Type, D: Device<T>>(
     args: &[NDArray<T, D>],
     op: impl Fn(&NDArray<T, D>, &NDArray<T, D>) -> NDArray<T, D>,
 ) -> NDArray<T, D> {

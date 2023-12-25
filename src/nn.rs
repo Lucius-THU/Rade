@@ -5,7 +5,7 @@ use bincode::config;
 use bincode::error::{DecodeError, EncodeError};
 use std::{fs, path::Path};
 
-pub trait Module<T: Type, D: Device> {
+pub trait Module<T: Type, D: Device<T>> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D>;
     fn parameters(&self) -> Vec<Tensor<T, D>>;
     fn state_dict(&self) -> Vec<Tensor<T, D>>;
@@ -51,16 +51,16 @@ pub trait Module<T: Type, D: Device> {
     }
 }
 
-pub struct Linear<T: Float, D: Device> {
+pub struct Linear<T: Float, D: Device<T>> {
     weight: Tensor<T, D>,
     bias: Option<Tensor<T, D>>,
 }
 
 pub struct ReLU;
 
-pub struct Sequential<T: Type, D: Device>(Vec<Box<dyn Module<T, D>>>);
+pub struct Sequential<T: Type, D: Device<T>>(Vec<Box<dyn Module<T, D>>>);
 
-pub struct BatchNorm<T: Float, D: Device> {
+pub struct BatchNorm<T: Float, D: Device<T>> {
     weight: Tensor<T, D>,
     bias: Tensor<T, D>,
     running_mean: Tensor<T, D>,
@@ -75,9 +75,9 @@ pub struct Dropout<T: Float> {
     training: bool,
 }
 
-pub struct Residual<T: Type, D: Device>(Box<dyn Module<T, D>>);
+pub struct Residual<T: Type, D: Device<T>>(Box<dyn Module<T, D>>);
 
-impl<T: Float, D: Device> Linear<T, D> {
+impl<T: Float, D: Device<T>> Linear<T, D> {
     pub fn new(in_features: usize, out_features: usize, bias: bool) -> Self {
         let weight = Tensor::kaiming_uniform(in_features, out_features, true);
         let bias = if bias {
@@ -93,7 +93,7 @@ impl<T: Float, D: Device> Linear<T, D> {
     }
 }
 
-impl<T: Float, D: Device> Module<T, D> for Linear<T, D> {
+impl<T: Float, D: Device<T>> Module<T, D> for Linear<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         let mut output = input.matmul(&self.weight);
         if let Some(bias) = &self.bias {
@@ -115,7 +115,7 @@ impl<T: Float, D: Device> Module<T, D> for Linear<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Module<T, D> for ReLU {
+impl<T: Type, D: Device<T>> Module<T, D> for ReLU {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         input.relu()
     }
@@ -129,13 +129,13 @@ impl<T: Type, D: Device> Module<T, D> for ReLU {
     }
 }
 
-impl<T: Type, D: Device> Sequential<T, D> {
+impl<T: Type, D: Device<T>> Sequential<T, D> {
     pub fn new(modules: Vec<Box<dyn Module<T, D>>>) -> Self {
         Self(modules)
     }
 }
 
-impl<T: Type, D: Device> Module<T, D> for Sequential<T, D> {
+impl<T: Type, D: Device<T>> Module<T, D> for Sequential<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         let mut output = input.clone();
         for module in &mut self.0 {
@@ -173,7 +173,7 @@ impl<T: Type, D: Device> Module<T, D> for Sequential<T, D> {
     }
 }
 
-impl<T: Float, D: Device> BatchNorm<T, D> {
+impl<T: Float, D: Device<T>> BatchNorm<T, D> {
     pub fn new(dim: usize, eps: T, momentum: T) -> Self {
         BatchNorm {
             weight: Tensor::ones(&[dim], true),
@@ -187,7 +187,7 @@ impl<T: Float, D: Device> BatchNorm<T, D> {
     }
 }
 
-impl<T: Float, D: Device> Module<T, D> for BatchNorm<T, D> {
+impl<T: Float, D: Device<T>> Module<T, D> for BatchNorm<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         if !self.training {
             &(&(&self.weight * &(input - &self.running_mean))
@@ -236,7 +236,7 @@ impl<T: Float> Dropout<T> {
     }
 }
 
-impl<T: Float, D: Device> Module<T, D> for Dropout<T> {
+impl<T: Float, D: Device<T>> Module<T, D> for Dropout<T> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         if !self.training {
             input.clone()
@@ -263,13 +263,13 @@ impl<T: Float, D: Device> Module<T, D> for Dropout<T> {
     }
 }
 
-impl<T: Type, D: Device> Residual<T, D> {
+impl<T: Type, D: Device<T>> Residual<T, D> {
     pub fn new(module: Box<dyn Module<T, D>>) -> Self {
         Self(module)
     }
 }
 
-impl<T: Type, D: Device> Module<T, D> for Residual<T, D> {
+impl<T: Type, D: Device<T>> Module<T, D> for Residual<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         input + &self.0.forward(input)
     }

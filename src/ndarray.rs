@@ -1,7 +1,7 @@
 use crate::device::Device;
 use crate::type_trait::{Float, Type};
 use num_traits::Pow;
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, Div, Index, Mul, Sub};
 use std::sync::Arc;
 
 pub enum Storage<T> {
@@ -9,16 +9,16 @@ pub enum Storage<T> {
     CUDA(*mut T),
 }
 
-pub struct Idx {
+pub struct Idx<'a> {
     pub(crate) idx: Vec<usize>,
-    pub(crate) shape: Vec<usize>,
+    pub(crate) shape: &'a [usize],
 }
 
 #[derive(Clone)]
-pub struct NDArray<T: Type, D: Device>(pub(crate) Arc<_NDArray<T, D>>);
+pub struct NDArray<T: Type, D: Device<T>>(pub(crate) Arc<_NDArray<T, D>>);
 
 #[derive(Clone)]
-pub(crate) struct _NDArray<T: Type, D: Device> {
+pub(crate) struct _NDArray<T: Type, D: Device<T>> {
     pub data: Arc<Storage<T>>,
     pub shape: Vec<usize>,
     pub strides: Vec<usize>,
@@ -26,7 +26,7 @@ pub(crate) struct _NDArray<T: Type, D: Device> {
     pub device: D,
 }
 
-impl<T: Type, D: Device> NDArray<T, D> {
+impl<T: Type, D: Device<T>> NDArray<T, D> {
     pub(crate) fn make(
         data: Storage<T>,
         shape: Vec<usize>,
@@ -87,7 +87,7 @@ impl<T: Type, D: Device> NDArray<T, D> {
     }
 
     fn reduce_axes(&self, axes: &[usize], keep_dims: bool) -> (NDArray<T, D>, Vec<usize>) {
-        let mut permutation = vec![];
+        let mut permutation = axes.to_vec();
         let mut shape = vec![];
         for i in 0..self.ndim() {
             if !axes.contains(&i) {
@@ -97,24 +97,27 @@ impl<T: Type, D: Device> NDArray<T, D> {
                 shape.push(1);
             }
         }
+        let mut perm = self.permute(&permutation);
         if shape.is_empty() {
             shape.push(1);
         }
-        permutation.append(&mut axes.to_vec());
-        let perm = self.permute(&permutation);
+        if perm.ndim() == axes.len() {
+            Arc::make_mut(&mut perm.0).shape.push(1);
+            Arc::make_mut(&mut perm.0).strides.push(1);
+        }
         (perm, shape)
     }
 
     pub fn sum(&self, axis: Option<Vec<usize>>, keep_dims: bool) -> Self {
         let axis = axis.unwrap_or((0..self.ndim()).collect::<Vec<_>>());
         let (perm, shape) = self.reduce_axes(&axis, keep_dims);
-        self.0.device.sum(&perm, shape)
+        self.0.device.sum(&perm, shape, axis.len())
     }
 
     pub fn max(&self, axis: Option<Vec<usize>>, keep_dims: bool) -> Self {
         let axis = axis.unwrap_or((0..self.ndim()).collect::<Vec<_>>());
         let (perm, shape) = self.reduce_axes(&axis, keep_dims);
-        self.0.device.max(&perm, shape)
+        self.0.device.max(&perm, shape, axis.len())
     }
 
     pub fn reshape(&self, shape: &[usize]) -> Self {
@@ -162,7 +165,7 @@ impl<T: Type, D: Device> NDArray<T, D> {
     }
 }
 
-impl<T: Float, D: Device> NDArray<T, D> {
+impl<T: Float, D: Device<T>> NDArray<T, D> {
     pub fn ln(&self) -> Self {
         self.0.device.ln(self)
     }
@@ -172,13 +175,13 @@ impl<T: Float, D: Device> NDArray<T, D> {
     }
 }
 
-impl<T: Type + Pow<T, Output = T>, D: Device> NDArray<T, D> {
+impl<T: Type + Pow<T, Output = T>, D: Device<T>> NDArray<T, D> {
     pub fn scalar_pow(&self, rhs: T) -> Self {
         self.0.device.scalar_pow(rhs, self)
     }
 }
 
-impl<T: Type, D: Device> Add for &NDArray<T, D> {
+impl<T: Type, D: Device<T>> Add for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -186,7 +189,7 @@ impl<T: Type, D: Device> Add for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Add<T> for &NDArray<T, D> {
+impl<T: Type, D: Device<T>> Add<T> for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn add(self, rhs: T) -> Self::Output {
@@ -194,7 +197,7 @@ impl<T: Type, D: Device> Add<T> for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Sub for &NDArray<T, D> {
+impl<T: Type, D: Device<T>> Sub for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -202,7 +205,7 @@ impl<T: Type, D: Device> Sub for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Mul for &NDArray<T, D> {
+impl<T: Type, D: Device<T>> Mul for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -210,7 +213,7 @@ impl<T: Type, D: Device> Mul for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Mul<T> for &NDArray<T, D> {
+impl<T: Type, D: Device<T>> Mul<T> for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn mul(self, rhs: T) -> Self::Output {
@@ -218,13 +221,13 @@ impl<T: Type, D: Device> Mul<T> for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device> PartialEq for NDArray<T, D> {
+impl<T: Type, D: Device<T>> PartialEq for NDArray<T, D> {
     fn eq(&self, other: &Self) -> bool {
         self.0.device.eq(self, other)
     }
 }
 
-impl<T: Type + Pow<T, Output = T>, D: Device> Pow<&NDArray<T, D>> for &NDArray<T, D> {
+impl<T: Type + Pow<T, Output = T>, D: Device<T>> Pow<&NDArray<T, D>> for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn pow(self, rhs: &NDArray<T, D>) -> Self::Output {
@@ -232,7 +235,7 @@ impl<T: Type + Pow<T, Output = T>, D: Device> Pow<&NDArray<T, D>> for &NDArray<T
     }
 }
 
-impl<U: Type, T: Type + Pow<U, Output = T>, D: Device> Pow<U> for &NDArray<T, D> {
+impl<U: Type, T: Type + Pow<U, Output = T>, D: Device<T>> Pow<U> for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn pow(self, rhs: U) -> Self::Output {
@@ -240,7 +243,7 @@ impl<U: Type, T: Type + Pow<U, Output = T>, D: Device> Pow<U> for &NDArray<T, D>
     }
 }
 
-impl<T: Type, D: Device> Div<&NDArray<T, D>> for &NDArray<T, D> {
+impl<T: Type, D: Device<T>> Div<&NDArray<T, D>> for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn div(self, rhs: &NDArray<T, D>) -> Self::Output {
@@ -248,11 +251,27 @@ impl<T: Type, D: Device> Div<&NDArray<T, D>> for &NDArray<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Div<T> for &NDArray<T, D> {
+impl<T: Type, D: Device<T>> Div<T> for &NDArray<T, D> {
     type Output = NDArray<T, D>;
 
     fn div(self, rhs: T) -> Self::Output {
         self.0.device.div_scalar(self, rhs)
+    }
+}
+
+impl<'a, T: Type, D: Device<T>> Index<&Idx<'a>> for NDArray<T, D> {
+    type Output = T;
+
+    fn index(&self, index: &Idx) -> &Self::Output {
+        if let Storage::CPU(data) = self.0.data.as_ref() {
+            &data[index
+                .idx
+                .iter()
+                .zip(&self.0.strides)
+                .fold(self.0.offset, |acc, (idx, dim)| acc + idx * dim)]
+        } else {
+            panic!("Tensor Storage mismatched with Device.")
+        }
     }
 }
 
@@ -267,16 +286,16 @@ pub(crate) fn compact_strides(shape: &[usize]) -> Vec<usize> {
     strides
 }
 
-impl Idx {
-    pub fn new(shape: &[usize]) -> Self {
+impl<'a> Idx<'a> {
+    pub fn new(shape: &'a [usize]) -> Self {
         Self {
             idx: vec![0; shape.len()],
-            shape: shape.to_vec(),
+            shape,
         }
     }
 
     pub fn next(&mut self) -> bool {
-        for (id, &dim) in self.idx.iter_mut().zip(&self.shape).rev() {
+        for (id, &dim) in self.idx.iter_mut().zip(self.shape).rev() {
             *id += 1;
             if *id < dim {
                 return true;

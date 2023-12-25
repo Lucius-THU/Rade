@@ -1,4 +1,3 @@
-use crate::cpu::tile::Tile;
 use crate::device::Device;
 use crate::operation::ScalarPow;
 use crate::tensor::Tensor;
@@ -10,8 +9,6 @@ use std::ops::{AddAssign, Index, MulAssign};
 
 pub trait Type:
     'static
-    + Send
-    + Sync
     + Encode
     + Decode
     + Num
@@ -22,7 +19,6 @@ pub trait Type:
     + PartialOrd
     + AddAssign
     + MulAssign
-    + Tile
 {
     fn atol() -> Self {
         Self::zero()
@@ -75,7 +71,7 @@ impl<T, const N: usize> Len<T> for [T; N] {
 }
 
 pub trait Float: Signed + num_traits::Float + Pow<Self, Output = Self> {
-    fn powt<D: Device>(self, rhs: &Tensor<Self, D>) -> Tensor<Self, D> {
+    fn powt<D: Device<Self>>(self, rhs: &Tensor<Self, D>) -> Tensor<Self, D> {
         Tensor::calc(ScalarPow(self), vec![rhs.clone()])
     }
 }

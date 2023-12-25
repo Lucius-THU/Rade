@@ -16,7 +16,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
-pub(crate) struct Value<T: Type, D: Device> {
+pub(crate) struct Value<T: Type, D: Device<T>> {
     cached_data: Option<NDArray<T, D>>,
     pub inputs: Vec<Tensor<T, D>>,
     op: Option<Box<dyn Operation<T, D>>>,
@@ -25,9 +25,9 @@ pub(crate) struct Value<T: Type, D: Device> {
 }
 
 #[derive(Clone)]
-pub struct Tensor<T: Type, D: Device>(pub(crate) Arc<RwLock<Value<T, D>>>, usize);
+pub struct Tensor<T: Type, D: Device<T>>(pub(crate) Arc<RwLock<Value<T, D>>>, usize);
 
-impl<T: Type, D: Device> Tensor<T, D> {
+impl<T: Type, D: Device<T>> Tensor<T, D> {
     pub fn new_with_shape(data: &[T], shape: &[usize], requires_grad: bool) -> Self {
         Self::make(
             Some(D::new(data.as_ptr() as *mut T, shape)),
@@ -83,8 +83,8 @@ impl<T: Type, D: Device> Tensor<T, D> {
         Self::make(Some(D::zeros(&self.shape())), vec![], None, requires_grad)
     }
 
-    pub fn one_hot<U: Unsigned>(
-        labels: &Tensor<U, D>,
+    pub fn one_hot<U: Unsigned, E: Device<U>>(
+        labels: &Tensor<U, E>,
         num_classes: usize,
         requires_grad: bool,
     ) -> Self {
@@ -257,7 +257,7 @@ impl<T: Type, D: Device> Tensor<T, D> {
     }
 }
 
-impl<T: Float, D: Device> Tensor<T, D> {
+impl<T: Float, D: Device<T>> Tensor<T, D> {
     pub fn ln(&self) -> Self {
         Self::calc(Ln, vec![self.clone()])
     }
@@ -276,7 +276,7 @@ impl<T: Float, D: Device> Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Add for &Tensor<T, D> {
+impl<T: Type, D: Device<T>> Add for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -284,7 +284,7 @@ impl<T: Type, D: Device> Add for &Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Add<T> for &Tensor<T, D> {
+impl<T: Type, D: Device<T>> Add<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn add(self, rhs: T) -> Self::Output {
@@ -292,7 +292,7 @@ impl<T: Type, D: Device> Add<T> for &Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Mul for &Tensor<T, D> {
+impl<T: Type, D: Device<T>> Mul for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -300,7 +300,7 @@ impl<T: Type, D: Device> Mul for &Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Mul<T> for &Tensor<T, D> {
+impl<T: Type, D: Device<T>> Mul<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn mul(self, rhs: T) -> Self::Output {
@@ -308,7 +308,7 @@ impl<T: Type, D: Device> Mul<T> for &Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Sub for &Tensor<T, D> {
+impl<T: Type, D: Device<T>> Sub for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -316,7 +316,7 @@ impl<T: Type, D: Device> Sub for &Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Sub<T> for &Tensor<T, D> {
+impl<T: Type, D: Device<T>> Sub<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn sub(self, rhs: T) -> Self::Output {
@@ -324,7 +324,7 @@ impl<T: Type, D: Device> Sub<T> for &Tensor<T, D> {
     }
 }
 
-impl<T: Signed, D: Device> Div for &Tensor<T, D> {
+impl<T: Signed, D: Device<T>> Div for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -332,7 +332,7 @@ impl<T: Signed, D: Device> Div for &Tensor<T, D> {
     }
 }
 
-impl<T: Signed, D: Device> Div<T> for &Tensor<T, D> {
+impl<T: Signed, D: Device<T>> Div<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn div(self, rhs: T) -> Self::Output {
@@ -340,7 +340,7 @@ impl<T: Signed, D: Device> Div<T> for &Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Neg for &Tensor<T, D> {
+impl<T: Type, D: Device<T>> Neg for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn neg(self) -> Self::Output {
@@ -348,13 +348,13 @@ impl<T: Type, D: Device> Neg for &Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> PartialEq for Tensor<T, D> {
+impl<T: Type, D: Device<T>> PartialEq for Tensor<T, D> {
     fn eq(&self, other: &Self) -> bool {
         self.realize_cached_data() == other.realize_cached_data()
     }
 }
 
-impl<T: Float, D: Device> Pow<&Tensor<T, D>> for &Tensor<T, D> {
+impl<T: Float, D: Device<T>> Pow<&Tensor<T, D>> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn pow(self, rhs: &Tensor<T, D>) -> Self::Output {
@@ -362,7 +362,7 @@ impl<T: Float, D: Device> Pow<&Tensor<T, D>> for &Tensor<T, D> {
     }
 }
 
-impl<T: Float, D: Device> Pow<T> for &Tensor<T, D> {
+impl<T: Float, D: Device<T>> Pow<T> for &Tensor<T, D> {
     type Output = Tensor<T, D>;
 
     fn pow(self, rhs: T) -> Self::Output {
@@ -373,7 +373,7 @@ impl<T: Float, D: Device> Pow<T> for &Tensor<T, D> {
 macro_rules! impl_div {
     ($($t:ty),*) => {
         $(
-            impl<D: Device> Div<&Tensor<$t, D>> for $t {
+            impl<D: Device<$t>> Div<&Tensor<$t, D>> for $t {
                 type Output = Tensor<$t, D>;
 
                 fn div(self, rhs: &Tensor<$t, D>) -> Self::Output {
@@ -388,7 +388,7 @@ impl_div!(isize, i8, i16, i32, i64, f32, f64);
 
 macro_rules! impl_pow_scalar {
     ($t:ty, $u:ty) => {
-        impl<D: Device> Pow<$u> for &Tensor<$t, D> {
+        impl<D: Device<$t>> Pow<$u> for &Tensor<$t, D> {
             type Output = Tensor<$t, D>;
 
             fn pow(self, rhs: $u) -> Self::Output {
@@ -409,7 +409,7 @@ impl_pow_scalar!(i64, u32);
 macro_rules! impl_add {
     ($($t:ty),*) => {
         $(
-            impl<D: Device> Add<&Tensor<$t, D>> for $t {
+            impl<D: Device<$t>> Add<&Tensor<$t, D>> for $t {
                 type Output = Tensor<$t, D>;
 
                 fn add(self, rhs: &Tensor<$t, D>) -> Self::Output {
@@ -423,7 +423,7 @@ macro_rules! impl_add {
 macro_rules! impl_mul {
     ($($t:ty),*) => {
         $(
-            impl<D: Device> Mul<&Tensor<$t, D>> for $t {
+            impl<D: Device<$t>> Mul<&Tensor<$t, D>> for $t {
                 type Output = Tensor<$t, D>;
 
                 fn mul(self, rhs: &Tensor<$t, D>) -> Self::Output {
@@ -437,7 +437,7 @@ macro_rules! impl_mul {
 macro_rules! impl_sub {
     ($($t:ty),*) => {
         $(
-            impl<D: Device> Sub<&Tensor<$t, D>> for $t {
+            impl<D: Device<$t>> Sub<&Tensor<$t, D>> for $t {
                 type Output = Tensor<$t, D>;
 
                 fn sub(self, rhs: &Tensor<$t, D>) -> Self::Output {
@@ -454,7 +454,7 @@ impl_mul!(isize, i8, i16, i32, i64, f32, f64);
 
 impl_sub!(isize, i8, i16, i32, i64, f32, f64);
 
-impl<T: Type, D: Device> Encode for Tensor<T, D> {
+impl<T: Type, D: Device<T>> Encode for Tensor<T, D> {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         if self.0.read().unwrap().inputs.len() > 0 {
             Err(EncodeError::Other("Tensors with inputs can't be encoded."))
@@ -478,14 +478,14 @@ impl<T: Type, D: Device> Encode for Tensor<T, D> {
     }
 }
 
-impl<T: Type, D: Device> Decode for Tensor<T, D> {
+impl<T: Type, D: Device<T>> Decode for Tensor<T, D> {
     fn decode<U: Decoder>(decoder: &mut U) -> Result<Self, DecodeError> {
         let data = D::decode(decoder)?;
         Ok(Self::make(Some(data), vec![], None, true))
     }
 }
 
-fn topo_sort<T: Type, D: Device>(
+fn topo_sort<T: Type, D: Device<T>>(
     node: &Tensor<T, D>,
     visited: &mut HashSet<usize>,
     stack: &mut Vec<Tensor<T, D>>,
