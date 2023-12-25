@@ -91,22 +91,26 @@ impl CPU {
         if let Storage::CPU(lhs_data) = lhs.0.data.as_ref() {
             let strides = ndarray::compact_strides(&shape);
             let len = shape[0] * strides[0];
-            let reduce_lens = lhs.len() / len;
+            let mut last_offset = lhs.len();
+            let reduce_lens = last_offset / len;
             let mut data = vec![init; len];
             let mut idx = CPUIdx::new(lhs, dims);
             let mut temp = vec![T::zero(); len];
             for _ in 0..reduce_lens {
                 let offset = idx.get() + lhs.0.offset;
-                compact(
-                    &mut idx.idx,
-                    &lhs.0.shape,
-                    &lhs.0.strides,
-                    &mut temp,
-                    &lhs_data[offset..],
-                    dims,
-                    &mut 0,
-                    0,
-                );
+                if offset != last_offset {
+                    compact(
+                        &mut idx.idx,
+                        &lhs.0.shape,
+                        &lhs.0.strides,
+                        &mut temp,
+                        &lhs_data[offset..],
+                        dims,
+                        &mut 0,
+                        0,
+                    );
+                    last_offset = offset;
+                }
                 for i in 0..len {
                     data[i] = op(data[i], temp[i]);
                 }
