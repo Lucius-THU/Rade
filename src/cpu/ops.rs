@@ -1,4 +1,4 @@
-use crate::cpu::CPUIdx;
+use crate::cpu::Idx;
 use crate::type_trait::Type;
 use num_traits::Zero;
 use std::cmp::min;
@@ -48,8 +48,8 @@ pub trait CPUMatmul: Sized {
         lhs: &[Self],
         rhs: &[Self],
         out: &mut [Self],
-        lhs_idx: CPUIdx,
-        rhs_idx: CPUIdx,
+        lhs_idx: Idx,
+        rhs_idx: Idx,
         dims: [usize; 3],
         strides: [usize; 2],
     );
@@ -78,8 +78,8 @@ impl CPUMatmul for f32 {
         lhs: &[f32],
         rhs: &[f32],
         out: &mut [f32],
-        mut lhs_idx: CPUIdx,
-        mut rhs_idx: CPUIdx,
+        mut lhs_idx: Idx,
+        mut rhs_idx: Idx,
         dims: [usize; 3],
         strides: [usize; 2],
     ) {
@@ -90,7 +90,7 @@ impl CPUMatmul for f32 {
         for o in 0..total / inner_size {
             let outer_offset = o * inner_size;
             for i in 0..dims[0] {
-                let offset = lhs_idx.get();
+                let offset = lhs_idx.get(0);
                 f32::copy(
                     &lhs[offset..],
                     &mut temp_lhs[i * dims[1]..(i + 1) * dims[1]],
@@ -99,7 +99,7 @@ impl CPUMatmul for f32 {
                 lhs_idx.next();
             }
             for i in 0..dims[1] {
-                let offset = rhs_idx.get();
+                let offset = rhs_idx.get(0);
                 f32::copy(
                     &rhs[offset..],
                     &mut temp_rhs[i * dims[2]..(i + 1) * dims[2]],
@@ -180,7 +180,7 @@ macro_rules! impl_matmul {
     ($($t:ty),*) => {
         $(
             impl CPUMatmul for $t {
-                fn matmul(lhs: &[$t], rhs: &[$t], out: &mut [$t], mut lhs_idx: CPUIdx, mut rhs_idx: CPUIdx, dims: [usize; 3], strides: [usize; 2]) {
+                fn matmul(lhs: &[$t], rhs: &[$t], out: &mut [$t], mut lhs_idx: Idx, mut rhs_idx: Idx, dims: [usize; 3], strides: [usize; 2]) {
                     let total = out.len();
                     let inner_size = dims[0] * dims[2];
                     let tile = <$t>::LANES;
@@ -193,7 +193,7 @@ macro_rules! impl_matmul {
                         let mut temp_rhs = vec![<$t>::zero(); tiled_dims[1] * tiled_dims[2]];
                         let mut uncontiguous = vec![<$t>::zero(); dims[2]];
                         for i in 0..dims[1] {
-                            let offset = rhs_idx.get();
+                            let offset = rhs_idx.get(0);
                             <$t as CPUCopy>::copy(
                                 &rhs[offset..],
                                 &mut uncontiguous,
@@ -212,7 +212,7 @@ macro_rules! impl_matmul {
                             let r = min(tile, dims[0] - m);
                             let m_offset = m * dims[2];
                             for i in 0..r {
-                                let offset = lhs_idx.get();
+                                let offset = lhs_idx.get(0);
                                 <$t as CPUCopy>::copy(
                                     &lhs[offset..],
                                     &mut uncontiguous,

@@ -4,6 +4,7 @@ use bincode::de::Decoder;
 use bincode::enc::Encoder;
 use bincode::error::{DecodeError, EncodeError};
 use num_traits::Pow;
+use rand_distr::{StandardNormal, Distribution};
 
 pub trait Device<T: Type>: Clone {
     fn new(data: *mut T, shape: &[usize]) -> NDArray<T, Self>;
@@ -18,6 +19,8 @@ pub trait Device<T: Type>: Clone {
     ) -> NDArray<T, Self>;
 
     fn rand(shape: &[usize], low: T, high: T) -> NDArray<T, Self>;
+
+    fn randn(shape: &[usize], mean: T, std: T) -> NDArray<T, Self> where T: Float, StandardNormal: Distribution<T>;
 
     fn add(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self>;
 
@@ -72,6 +75,19 @@ pub trait Device<T: Type>: Clone {
     fn equal(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> NDArray<T, Self>;
 
     fn contiguous(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>;
+
+    fn index<U: Unsigned, F: Device<U>>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        index: NDArray<U, F>,
+    ) -> NDArray<T, Self>;
+
+    fn index_rev<U: Unsigned, F: Device<U>>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        index: NDArray<U, F>,
+        dim: usize,
+    ) -> NDArray<T, Self>;
 
     fn data(lhs: &NDArray<T, Self>) -> Vec<T>;
 

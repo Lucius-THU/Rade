@@ -1,12 +1,13 @@
 use crate::device::Device;
 use crate::tensor::Tensor;
-use crate::type_trait::{Float, Type};
+use crate::type_trait::{Float, Type, Unsigned};
 use bincode::config;
 use bincode::error::{DecodeError, EncodeError};
 use std::{fs, path::Path};
+use rand_distr::{Distribution, StandardNormal};
 
-pub trait Module<T: Type, D: Device<T>> {
-    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D>;
+pub trait Module<T: Type, U: Type, D: Device<T> + Device<U>> {
+    fn forward(&mut self, input: &Tensor<U, D>) -> Tensor<T, D>;
     fn parameters(&self) -> Vec<Tensor<T, D>>;
     fn state_dict(&self) -> Vec<Tensor<T, D>>;
     fn train(&mut self) {}
@@ -58,7 +59,7 @@ pub struct Linear<T: Float, D: Device<T>> {
 
 pub struct ReLU;
 
-pub struct Sequential<T: Type, D: Device<T>>(Vec<Box<dyn Module<T, D>>>);
+pub struct Sequential<T: Type, D: Device<T>>(Vec<Box<dyn Module<T, T, D>>>);
 
 pub struct BatchNorm<T: Float, D: Device<T>> {
     weight: Tensor<T, D>,
@@ -75,7 +76,9 @@ pub struct Dropout<T: Float> {
     training: bool,
 }
 
-pub struct Residual<T: Type, D: Device<T>>(Box<dyn Module<T, D>>);
+pub struct Residual<T: Type, D: Device<T>>(Box<dyn Module<T, T, D>>);
+
+pub struct Embedding<T: Type, D: Device<T>>(Tensor<T, D>);
 
 impl<T: Float, D: Device<T>> Linear<T, D> {
     pub fn new(in_features: usize, out_features: usize, bias: bool) -> Self {
@@ -93,7 +96,7 @@ impl<T: Float, D: Device<T>> Linear<T, D> {
     }
 }
 
-impl<T: Float, D: Device<T>> Module<T, D> for Linear<T, D> {
+impl<T: Float, D: Device<T>> Module<T, T, D> for Linear<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         let mut output = input.matmul(&self.weight);
         if let Some(bias) = &self.bias {
@@ -115,7 +118,7 @@ impl<T: Float, D: Device<T>> Module<T, D> for Linear<T, D> {
     }
 }
 
-impl<T: Type, D: Device<T>> Module<T, D> for ReLU {
+impl<T: Type, D: Device<T>> Module<T, T, D> for ReLU {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         input.relu()
     }
@@ -130,12 +133,12 @@ impl<T: Type, D: Device<T>> Module<T, D> for ReLU {
 }
 
 impl<T: Type, D: Device<T>> Sequential<T, D> {
-    pub fn new(modules: Vec<Box<dyn Module<T, D>>>) -> Self {
+    pub fn new(modules: Vec<Box<dyn Module<T, T, D>>>) -> Self {
         Self(modules)
     }
 }
 
-impl<T: Type, D: Device<T>> Module<T, D> for Sequential<T, D> {
+impl<T: Type, D: Device<T>> Module<T, T, D> for Sequential<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         let mut output = input.clone();
         for module in &mut self.0 {
@@ -187,7 +190,7 @@ impl<T: Float, D: Device<T>> BatchNorm<T, D> {
     }
 }
 
-impl<T: Float, D: Device<T>> Module<T, D> for BatchNorm<T, D> {
+impl<T: Float, D: Device<T>> Module<T, T, D> for BatchNorm<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         if !self.training {
             &(&(&self.weight * &(input - &self.running_mean))
@@ -236,7 +239,7 @@ impl<T: Float> Dropout<T> {
     }
 }
 
-impl<T: Float, D: Device<T>> Module<T, D> for Dropout<T> {
+impl<T: Float, D: Device<T>> Module<T, T, D> for Dropout<T> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         if !self.training {
             input.clone()
@@ -264,22 +267,22 @@ impl<T: Float, D: Device<T>> Module<T, D> for Dropout<T> {
 }
 
 impl<T: Type, D: Device<T>> Residual<T, D> {
-    pub fn new(module: Box<dyn Module<T, D>>) -> Self {
+    pub fn new(module: Box<dyn Module<T, T, D>>) -> Self {
         Self(module)
     }
 }
 
-impl<T: Type, D: Device<T>> Module<T, D> for Residual<T, D> {
+impl<T: Type, D: Device<T>> Module<T, T, D> for Residual<T, D> {
     fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
         input + &self.0.forward(input)
     }
 
     fn parameters(&self) -> Vec<Tensor<T, D>> {
-        vec![]
+        self.0.parameters()
     }
 
     fn state_dict(&self) -> Vec<Tensor<T, D>> {
-        vec![]
+        self.0.state_dict()
     }
 
     fn train(&mut self) {
@@ -288,6 +291,26 @@ impl<T: Type, D: Device<T>> Module<T, D> for Residual<T, D> {
 
     fn eval(&mut self) {
         self.0.eval()
+    }
+}
+
+impl<T: Float, D: Device<T>> Embedding<T, D> where StandardNormal: Distribution<T> {
+    pub fn new(num_embeddings: usize, embedding_dim: usize) -> Self {
+        Self(Tensor::randn(&[num_embeddings, embedding_dim], T::zero(), T::one(), true))
+    }
+}
+
+impl<T: Float, U: Unsigned, D: Device<T> + Device<U> + 'static> Module<T, U, D> for Embedding<T, D> {
+    fn forward(&mut self, input: &Tensor<U, D>) -> Tensor<T, D> {
+        self.0.index(input)
+    }
+
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
+        vec![self.0.clone()]
+    }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        vec![self.0.clone()]
     }
 }
 

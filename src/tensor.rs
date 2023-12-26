@@ -1,10 +1,6 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
-use crate::operation::{
-    AddScalar, Broadcast, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, EWiseSub, Equal,
-    GTScalar, Ln, Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarDiv,
-    ScalarSub, Sqrt, Summation, Transpose,
-};
+use crate::operation::{AddScalar, Broadcast, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, EWiseSub, Equal, GTScalar, Ln, Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarDiv, ScalarSub, Sqrt, Summation, Transpose, Index, IndexRev};
 use crate::type_trait::{Float, Len, Signed, Type, Unsigned};
 use bincode::de::Decoder;
 use bincode::enc::Encoder;
@@ -15,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use rand_distr::{Distribution, StandardNormal};
 
 pub(crate) struct Value<T: Type, D: Device<T>> {
     cached_data: Option<NDArray<T, D>>,
@@ -128,7 +125,7 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
     }
 
     pub fn shape(&self) -> Vec<usize> {
-        self.realize_cached_data().shape()
+        self.realize_cached_data().shape().to_vec()
     }
 
     pub fn grad(&self) -> Option<Self> {
@@ -219,6 +216,20 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
         Self::calc(Max(axes, keep_dims), vec![self.clone()])
     }
 
+    pub fn index<U: Unsigned>(&self, index: &Tensor<U, D>) -> Self where D: Device<U> + 'static {
+        if index.0.read().unwrap().requires_grad {
+            panic!("Index tensor should not require grad.")
+        }
+        Tensor::calc(Index(index.clone()), vec![self.clone()])
+    }
+
+    pub fn index_rev<U: Unsigned>(&self, index: &Tensor<U, D>, dim: usize) -> Self where D: Device<U> + 'static {
+        if index.0.read().unwrap().requires_grad {
+            panic!("Index tensor should not require grad.")
+        }
+        Tensor::calc(IndexRev(index.clone(), dim), vec![self.clone()])
+    }
+
     pub(crate) fn realize_cached_data(&self) -> NDArray<T, D> {
         {
             let value = self.0.read().unwrap();
@@ -258,6 +269,10 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
 }
 
 impl<T: Float, D: Device<T>> Tensor<T, D> {
+    pub fn randn(shape: &[usize], mean: T, std: T, requires_grad: bool) -> Self where StandardNormal: Distribution<T> {
+        Self::make(Some(D::randn(shape, mean, std)), vec![], None, requires_grad)
+    }
+
     pub fn ln(&self) -> Self {
         Self::calc(Ln, vec![self.clone()])
     }
@@ -701,5 +716,16 @@ mod tests {
             true,
         );
         assert!(b == c);
+    }
+
+    #[test]
+    fn test_embedding() {
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], true);
+        let b = Tensor::<usize, CPU>::new1d([1, 0, 1], false);
+        let c = a.index(&b);
+        c.backward();
+        assert!(c == Tensor::new2d([[4., 5., 6.], [1., 2., 3.], [4., 5., 6.]], false));
+        let d = a.grad().unwrap();
+        assert!(d == Tensor::new2d([[1., 1., 1.], [2., 2., 2.]], false));
     }
 }

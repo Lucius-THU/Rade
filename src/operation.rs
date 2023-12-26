@@ -1,7 +1,7 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::tensor::Tensor;
-use crate::type_trait::{Float, Signed, Type};
+use crate::type_trait::{Float, Signed, Type, Unsigned};
 use num_traits::{One, Pow};
 use std::ops::Div;
 
@@ -59,13 +59,17 @@ pub(crate) struct Max(pub Option<Vec<usize>>, pub bool);
 
 pub(crate) struct Equal;
 
+pub(crate) struct Index<U: Unsigned, F: Device<U>>(pub Tensor<U, F>);
+
+pub(crate) struct IndexRev<U: Unsigned, F: Device<U>>(pub Tensor<U, F>, pub usize);
+
 impl<T: Type, D: Device<T>> Operation<T, D> for Broadcast {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].broadcast(&self.0)
     }
 
     fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
-        vec![reduce_by_add(out_grad, &node.data().unwrap().shape())]
+        vec![reduce_by_add(out_grad, node.data().unwrap().shape())]
     }
 }
 
@@ -399,6 +403,26 @@ impl<T: Type, D: Device<T>> Operation<T, D> for Matmul {
             inputs[0].transpose(None).matmul(out_grad),
         ];
         reduce_to_shape(in_grads, inputs)
+    }
+}
+
+impl<T: Type, U: Unsigned, D: Device<T> + Device<U> + 'static> Operation<T, D> for Index<U, D> {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].index(self.0.realize_cached_data())
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        vec![out_grad.index_rev(&self.0, node.0.read().unwrap().inputs[0].shape()[0])]
+    }
+}
+
+impl<T: Type, U: Unsigned, D: Device<T> + Device<U> + 'static> Operation<T, D> for IndexRev<U, D> {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].index_rev(self.0.realize_cached_data(), self.1)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        vec![out_grad.index(&self.0)]
     }
 }
 

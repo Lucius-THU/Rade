@@ -8,7 +8,7 @@ use bincode::enc::Encoder;
 use bincode::error::{DecodeError, EncodeError};
 use bincode::{Decode, Encode};
 use num_traits::Pow;
-use rand::distributions::{Distribution, Uniform};
+use rand_distr::{Distribution, Normal, StandardNormal, Uniform};
 use std::fmt::{self, Display, Formatter};
 use std::slice;
 
@@ -16,12 +16,6 @@ pub(crate) mod ops;
 
 #[derive(Clone)]
 pub struct CPU;
-
-pub struct CPUIdx<'a> {
-    idx: Vec<usize>,
-    shape: &'a [usize],
-    strides: &'a [usize],
-}
 
 impl CPU {
     fn scalar_op<T: CPUType, U: Type>(
@@ -94,10 +88,10 @@ impl CPU {
             let mut last_offset = lhs.len();
             let reduce_lens = last_offset / len;
             let mut data = vec![init; len];
-            let mut idx = CPUIdx::new(lhs, dims);
+            let mut idx = Idx::new(lhs, dims);
             let mut temp = vec![T::zero(); len];
             for _ in 0..reduce_lens {
-                let offset = idx.get() + lhs.0.offset;
+                let offset = idx.get(lhs.0.offset);
                 if offset != last_offset {
                     compact(
                         &mut idx.idx,
@@ -164,7 +158,7 @@ impl<T: CPUType> Device<T> for CPU {
     ) -> NDArray<T, Self> {
         let len = indices.len();
         let mut data = vec![T::zero(); len * num_classes];
-        let mut idx = Idx::new(&indices.0.shape);
+        let mut idx = Idx::new(indices, indices.ndim());
         for i in 0..len {
             data[i * num_classes + indices[&idx].to_usize().unwrap()] = T::one();
             idx.next();
@@ -182,6 +176,23 @@ impl<T: CPUType> Device<T> for CPU {
         let mut data = Vec::with_capacity(shape[0] * strides[0]);
         for _ in 0..shape[0] * strides[0] {
             data.push(uniform.sample(&mut rng));
+        }
+        NDArray::make(
+            Storage::CPU(data),
+            shape.to_vec(),
+            strides.to_vec(),
+            0,
+            Self,
+        )
+    }
+
+    fn randn(shape: &[usize], mean: T, std: T) -> NDArray<T, Self> where T: Float, StandardNormal: Distribution<T> {
+        let strides = ndarray::compact_strides(shape);
+        let mut rng = rand::thread_rng();
+        let normal = Normal::new(mean, std).unwrap();
+        let mut data = Vec::with_capacity(shape[0] * strides[0]);
+        for _ in 0..shape[0] * strides[0] {
+            data.push(normal.sample(&mut rng));
         }
         NDArray::make(
             Storage::CPU(data),
@@ -300,8 +311,8 @@ impl<T: CPUType> Device<T> for CPU {
             let dims = [shape[ndim - 2], shape[ndim - 1], rhs.0.shape[ndim - 1]];
             shape[ndim - 1] = dims[2];
             let strides = ndarray::compact_strides(&shape);
-            let lhs_idx = CPUIdx::new(lhs, ndim - 1);
-            let rhs_idx = CPUIdx::new(rhs, ndim - 1);
+            let lhs_idx = Idx::new(lhs, ndim - 1);
+            let rhs_idx = Idx::new(rhs, ndim - 1);
             let mut data = vec![T::zero(); shape[0] * strides[0]];
             T::matmul(
                 &lhs_data[lhs.0.offset..],
@@ -358,6 +369,67 @@ impl<T: CPUType> Device<T> for CPU {
         }
     }
 
+    fn index<U: Unsigned, F: Device<U>>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        index: NDArray<U, F>,
+    ) -> NDArray<T, Self> {
+        if !lhs.is_contiguous() {
+            return self.index(&CPU.contiguous(lhs), index);
+        }
+        if let Storage::CPU(lhs_data) = lhs.0.data.as_ref() {
+            let mut shape = index.shape().to_vec();
+            let len = lhs.len() / lhs.shape()[0];
+            let index_len = index.len();
+            let mut data = Vec::with_capacity(index_len * len);
+            let mut idx = Idx::new(&index, index.ndim());
+            let offset = lhs.0.offset;
+            for _ in 0..index_len {
+                let i = index[&idx].to_usize().unwrap();
+                let l = offset + i * len;
+                data.extend(&lhs_data[l..l + len]);
+                idx.next();
+            }
+            shape.extend(&lhs.shape()[1..]);
+            let strides = ndarray::compact_strides(&shape);
+            NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
+        } else {
+            panic!("Tensor Storage mismatched with Device.")
+        }
+    }
+
+    fn index_rev<U: Unsigned, F: Device<U>>(
+        &self,
+        lhs: &NDArray<T, Self>,
+        index: NDArray<U, F>,
+        dim: usize,
+    ) -> NDArray<T, Self> {
+        if !lhs.is_contiguous() {
+            return self.index_rev(&CPU.contiguous(lhs), index, dim);
+        }
+        if let Storage::CPU(lhs_data) = lhs.0.data.as_ref() {
+            let mut shape = vec![dim];
+            shape.extend(&lhs.shape()[index.ndim()..]);
+            let strides = ndarray::compact_strides(&shape);
+            let index_len = index.len();
+            let len = lhs.len() / index_len;
+            let mut data = vec![T::zero(); shape[0] * strides[0]];
+            let mut idx = Idx::new(&index, index.ndim());
+            let offset = lhs.0.offset;
+            for i in 0..index_len {
+                let id = index[&idx].to_usize().unwrap();
+                let l = offset + i * len;
+                data[id * len..(id + 1) * len].iter_mut().zip(
+                    &lhs_data[l..l + len],
+                ).for_each(|(x, &y)| *x += y);
+                idx.next();
+            }
+            NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
+        } else {
+            panic!("Tensor Storage mismatched with Device.")
+        }
+    }
+
     fn data(lhs: &NDArray<T, Self>) -> Vec<T> {
         if let Storage::CPU(data) = lhs.0.data.as_ref() {
             data.clone()
@@ -390,7 +462,7 @@ impl<T: CPUType> Display for Tensor<T, CPU> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "CPU(")?;
         let data = &self.realize_cached_data();
-        let mut idx = Idx::new(&data.0.shape);
+        let mut idx = Idx::new(data, data.ndim());
         let mut start = true;
         loop {
             let mut ident = ", ".to_string();
@@ -415,35 +487,6 @@ impl<T: CPUType> Display for Tensor<T, CPU> {
             ending = format!("{}]", ending);
         }
         write!(f, "{ending})")
-    }
-}
-
-impl<'a> CPUIdx<'a> {
-    fn new<T: CPUType>(array: &'a NDArray<T, CPU>, ndim: usize) -> Self {
-        Self {
-            idx: vec![0; ndim],
-            shape: &array.0.shape[..ndim],
-            strides: &array.0.strides[..ndim],
-        }
-    }
-
-    fn get(&self) -> usize {
-        self.idx
-            .iter()
-            .zip(self.strides)
-            .fold(0, |acc, (&idx, &stride)| acc + idx * stride)
-    }
-
-    fn next(&mut self) -> bool {
-        for (id, &dim) in self.idx.iter_mut().zip(self.shape).rev() {
-            *id += 1;
-            if *id < dim {
-                return true;
-            } else {
-                *id = 0;
-            }
-        }
-        false
     }
 }
 

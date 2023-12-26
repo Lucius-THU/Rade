@@ -1,5 +1,5 @@
 use crate::device::Device;
-use crate::type_trait::{Float, Type};
+use crate::type_trait::{Float, Type, Unsigned};
 use num_traits::Pow;
 use std::ops::{Add, Div, Index, Mul, Sub};
 use std::sync::Arc;
@@ -10,8 +10,9 @@ pub enum Storage<T> {
 }
 
 pub struct Idx<'a> {
-    pub(crate) idx: Vec<usize>,
-    pub(crate) shape: &'a [usize],
+    pub idx: Vec<usize>,
+    pub shape: &'a [usize],
+    strides: &'a [usize],
 }
 
 #[derive(Clone)]
@@ -43,8 +44,8 @@ impl<T: Type, D: Device<T>> NDArray<T, D> {
         }))
     }
 
-    pub(crate) fn shape(&self) -> Vec<usize> {
-        self.0.shape.to_vec()
+    pub(crate) fn shape(&self) -> &[usize] {
+        &self.0.shape
     }
 
     pub(crate) fn ndim(&self) -> usize {
@@ -163,6 +164,14 @@ impl<T: Type, D: Device<T>> NDArray<T, D> {
     pub fn contiguous(&self) -> Self {
         self.0.device.contiguous(self)
     }
+
+    pub fn index<U: Unsigned, F: Device<U>>(&self, index: NDArray<U, F>) -> Self {
+        self.0.device.index(self, index)
+    }
+
+    pub fn index_rev<U: Unsigned, F: Device<U>>(&self, index: NDArray<U, F>, dim: usize) -> Self {
+        self.0.device.index_rev(self, index, dim)
+    }
 }
 
 impl<T: Float, D: Device<T>> NDArray<T, D> {
@@ -263,35 +272,30 @@ impl<'a, T: Type, D: Device<T>> Index<&Idx<'a>> for NDArray<T, D> {
     type Output = T;
 
     fn index(&self, index: &Idx) -> &Self::Output {
-        if let Storage::CPU(data) = self.0.data.as_ref() {
-            &data[index
-                .idx
-                .iter()
-                .zip(&self.0.strides)
-                .fold(self.0.offset, |acc, (idx, dim)| acc + idx * dim)]
-        } else {
-            panic!("Tensor Storage mismatched with Device.")
+        if index.idx.len() != self.0.shape.len() {
+            panic!("Index length mismatched with Tensor dimension.")
+        }
+        match self.0.data.as_ref() {
+            Storage::CPU(data) => &data[index.get(self.0.offset)],
+            _ => panic!("Tensor Storage mismatched with Device."),
         }
     }
-}
-
-pub(crate) fn compact_strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = Vec::with_capacity(shape.len());
-    let mut stride = 1;
-    for &dim in shape.iter().rev() {
-        strides.push(stride);
-        stride *= dim;
-    }
-    strides.reverse();
-    strides
 }
 
 impl<'a> Idx<'a> {
-    pub fn new(shape: &'a [usize]) -> Self {
+    pub fn new<T: Type, D: Device<T>>(array: &'a NDArray<T, D>, ndim: usize) -> Self {
         Self {
-            idx: vec![0; shape.len()],
-            shape,
+            idx: vec![0; ndim],
+            shape: &array.0.shape[..ndim],
+            strides: &array.0.strides[..ndim],
         }
+    }
+
+    pub fn get(&self, offset: usize) -> usize {
+        self.idx
+            .iter()
+            .zip(self.strides)
+            .fold(offset, |acc, (&idx, &stride)| acc + idx * stride)
     }
 
     pub fn next(&mut self) -> bool {
@@ -305,4 +309,15 @@ impl<'a> Idx<'a> {
         }
         false
     }
+}
+
+pub(crate) fn compact_strides(shape: &[usize]) -> Vec<usize> {
+    let mut strides = Vec::with_capacity(shape.len());
+    let mut stride = 1;
+    for &dim in shape.iter().rev() {
+        strides.push(stride);
+        stride *= dim;
+    }
+    strides.reverse();
+    strides
 }
