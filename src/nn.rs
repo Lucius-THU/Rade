@@ -3,8 +3,8 @@ use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type, Unsigned};
 use bincode::config;
 use bincode::error::{DecodeError, EncodeError};
-use std::{fs, path::Path};
 use rand_distr::{Distribution, StandardNormal};
+use std::{fs, path::Path};
 
 pub trait Module<T: Type, U: Type, D: Device<T> + Device<U>> {
     fn forward(&mut self, input: &Tensor<U, D>) -> Tensor<T, D>;
@@ -69,6 +69,11 @@ pub struct BatchNorm<T: Float, D: Device<T>> {
     eps: T,
     momentum: T,
     training: bool,
+}
+
+pub struct RMSNorm<T: Float, D: Device<T>> {
+    weight: Tensor<T, D>,
+    eps: T,
 }
 
 pub struct Dropout<T: Float> {
@@ -233,6 +238,34 @@ impl<T: Float, D: Device<T>> Module<T, T, D> for BatchNorm<T, D> {
     }
 }
 
+impl<T: Float, D: Device<T>> RMSNorm<T, D> {
+    pub fn new(dim: usize, eps: T) -> Self {
+        RMSNorm {
+            weight: Tensor::ones(&[dim], true),
+            eps,
+        }
+    }
+}
+
+impl<T: Float, D: Device<T>> Module<T, T, D> for RMSNorm<T, D> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
+        &(input
+            / &(&(input * input)
+                .sum(Some(vec![input.ndim() - 1]), true)
+                .sqrt()
+                + self.eps))
+            * &self.weight
+    }
+
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
+        vec![self.weight.clone()]
+    }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        vec![self.weight.clone()]
+    }
+}
+
 impl<T: Float> Dropout<T> {
     pub fn new(p: T) -> Self {
         Dropout { p, training: true }
@@ -294,13 +327,23 @@ impl<T: Type, D: Device<T>> Module<T, T, D> for Residual<T, D> {
     }
 }
 
-impl<T: Float, D: Device<T>> Embedding<T, D> where StandardNormal: Distribution<T> {
+impl<T: Float, D: Device<T>> Embedding<T, D>
+where
+    StandardNormal: Distribution<T>,
+{
     pub fn new(num_embeddings: usize, embedding_dim: usize) -> Self {
-        Self(Tensor::randn(&[num_embeddings, embedding_dim], T::zero(), T::one(), true))
+        Self(Tensor::randn(
+            &[num_embeddings, embedding_dim],
+            T::zero(),
+            T::one(),
+            true,
+        ))
     }
 }
 
-impl<T: Float, U: Unsigned, D: Device<T> + Device<U> + 'static> Module<T, U, D> for Embedding<T, D> {
+impl<T: Float, U: Unsigned, D: Device<T> + Device<U> + 'static> Module<T, U, D>
+    for Embedding<T, D>
+{
     fn forward(&mut self, input: &Tensor<U, D>) -> Tensor<T, D> {
         self.0.index(input)
     }

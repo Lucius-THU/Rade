@@ -1,17 +1,21 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
-use crate::operation::{AddScalar, Broadcast, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, EWiseSub, Equal, GTScalar, Ln, Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar, Reshape, ScalarDiv, ScalarSub, Sqrt, Summation, Transpose, Index, IndexRev};
+use crate::operation::{
+    AddScalar, Broadcast, Cat, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, EWiseSub, Equal,
+    GTScalar, Index, IndexRev, Ln, Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar,
+    Reshape, ScalarDiv, ScalarSub, Split, Sqrt, Summation, Transpose,
+};
 use crate::type_trait::{Float, Len, Signed, Type, Unsigned};
 use bincode::de::Decoder;
 use bincode::enc::Encoder;
 use bincode::error::{DecodeError, EncodeError};
 use bincode::{Decode, Encode};
 use num_traits::Pow;
+use rand_distr::{Distribution, StandardNormal};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
-use rand_distr::{Distribution, StandardNormal};
 
 pub(crate) struct Value<T: Type, D: Device<T>> {
     cached_data: Option<NDArray<T, D>>,
@@ -128,6 +132,10 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
         self.realize_cached_data().shape().to_vec()
     }
 
+    pub fn ndim(&self) -> usize {
+        self.realize_cached_data().ndim()
+    }
+
     pub fn grad(&self) -> Option<Self> {
         self.0.read().unwrap().grad.clone()
     }
@@ -216,18 +224,36 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
         Self::calc(Max(axes, keep_dims), vec![self.clone()])
     }
 
-    pub fn index<U: Unsigned>(&self, index: &Tensor<U, D>) -> Self where D: Device<U> + 'static {
+    pub fn index<U: Unsigned>(&self, index: &Tensor<U, D>) -> Self
+    where
+        D: Device<U> + 'static,
+    {
         if index.0.read().unwrap().requires_grad {
             panic!("Index tensor should not require grad.")
         }
         Tensor::calc(Index(index.clone()), vec![self.clone()])
     }
 
-    pub fn index_rev<U: Unsigned>(&self, index: &Tensor<U, D>, dim: usize) -> Self where D: Device<U> + 'static {
+    pub fn index_rev<U: Unsigned>(&self, index: &Tensor<U, D>, dim: usize) -> Self
+    where
+        D: Device<U> + 'static,
+    {
         if index.0.read().unwrap().requires_grad {
             panic!("Index tensor should not require grad.")
         }
         Tensor::calc(IndexRev(index.clone(), dim), vec![self.clone()])
+    }
+
+    pub fn cat(&self, args: &[&Self], dim: usize) -> Self {
+        let mut inputs = vec![self.clone()];
+        for &arg in args {
+            inputs.push(arg.clone());
+        }
+        Tensor::calc(Cat(dim), inputs)
+    }
+
+    pub fn split(&self, dim: usize, start: usize, len: usize) -> Self {
+        Tensor::calc(Split(dim, start, len), vec![self.clone()])
     }
 
     pub(crate) fn realize_cached_data(&self) -> NDArray<T, D> {
@@ -269,8 +295,16 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
 }
 
 impl<T: Float, D: Device<T>> Tensor<T, D> {
-    pub fn randn(shape: &[usize], mean: T, std: T, requires_grad: bool) -> Self where StandardNormal: Distribution<T> {
-        Self::make(Some(D::randn(shape, mean, std)), vec![], None, requires_grad)
+    pub fn randn(shape: &[usize], mean: T, std: T, requires_grad: bool) -> Self
+    where
+        StandardNormal: Distribution<T>,
+    {
+        Self::make(
+            Some(D::randn(shape, mean, std)),
+            vec![],
+            None,
+            requires_grad,
+        )
     }
 
     pub fn ln(&self) -> Self {
@@ -727,5 +761,31 @@ mod tests {
         assert!(c == Tensor::new2d([[4., 5., 6.], [1., 2., 3.], [4., 5., 6.]], false));
         let d = a.grad().unwrap();
         assert!(d == Tensor::new2d([[1., 1., 1.], [2., 2., 2.]], false));
+    }
+
+    #[test]
+    fn test_cat() {
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], true);
+        assert!(
+            a.cat(&[&a], 0)
+                == Tensor::new2d(
+                    [[1., 2., 3.], [4., 5., 6.], [1., 2., 3.], [4., 5., 6.]],
+                    false
+                )
+        );
+
+        let b = a.cat(&[&a], 1);
+        b.backward();
+        assert!(a.grad().unwrap() == Tensor::new2d([[2., 2., 2.], [2., 2., 2.]], false));
+    }
+
+    #[test]
+    fn test_split() {
+        let a = Tensor::<f32, CPU>::new2d([[1., 2., 3.], [4., 5., 6.]], true);
+        assert!(a.split(0, 0, 1) == Tensor::new2d([[1., 2., 3.]], false));
+
+        let b = a.split(1, 1, 2);
+        b.backward();
+        assert!(a.grad().unwrap() == Tensor::new2d([[0., 1., 1.], [0., 1., 1.]], false));
     }
 }

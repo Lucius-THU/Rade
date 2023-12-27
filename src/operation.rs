@@ -63,6 +63,10 @@ pub(crate) struct Index<U: Unsigned, F: Device<U>>(pub Tensor<U, F>);
 
 pub(crate) struct IndexRev<U: Unsigned, F: Device<U>>(pub Tensor<U, F>, pub usize);
 
+pub(crate) struct Cat(pub usize);
+
+pub(crate) struct Split(pub usize, pub usize, pub usize);
+
 impl<T: Type, D: Device<T>> Operation<T, D> for Broadcast {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].broadcast(&self.0)
@@ -423,6 +427,61 @@ impl<T: Type, U: Unsigned, D: Device<T> + Device<U> + 'static> Operation<T, D> f
 
     fn gradient(&self, out_grad: &Tensor<T, D>, _: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         vec![out_grad.index(&self.0)]
+    }
+}
+
+impl<T: Type, D: Device<T>> Operation<T, D> for Cat {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        let mut shape = args[0].shape().to_vec();
+        if self.0 >= shape.len() {
+            panic!("Invalid dimension");
+        }
+        for i in &args[1..] {
+            let mut arg_shape = i.shape().to_vec();
+            if self.0 >= arg_shape.len() {
+                panic!("Invalid dimension");
+            }
+            shape[self.0] += arg_shape[self.0];
+            arg_shape[self.0] = shape[self.0];
+            if arg_shape != shape {
+                panic!("Invalid shape");
+            }
+        }
+        NDArray::cat(args, self.0, shape)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        let inputs = &node.0.read().unwrap().inputs;
+        let lhs_dim = inputs[0].shape()[self.0];
+        let rhs_dim = inputs[1].shape()[self.0];
+        vec![
+            out_grad.split(self.0, 0, lhs_dim),
+            out_grad.split(self.0, lhs_dim, rhs_dim),
+        ]
+    }
+}
+
+impl<T: Type, D: Device<T>> Operation<T, D> for Split {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        if args[0].ndim() <= self.0 {
+            panic!("Invalid dimension");
+        }
+        let dim = args[0].shape()[self.0];
+        if dim < self.1 + self.2 {
+            panic!("Invalid shape");
+        }
+        args[0].split(self.0, self.1, self.2)
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        let input = &node.0.read().unwrap().inputs[0];
+        let mut shape = input.shape();
+        shape[self.0] -= self.1 + self.2;
+        let requires_grad = out_grad.0.read().unwrap().requires_grad;
+        let third = Tensor::zeros(&shape, requires_grad);
+        shape[self.0] = self.1;
+        let first = Tensor::zeros(&shape, requires_grad);
+        vec![first.cat(&[out_grad, &third], self.0)]
     }
 }
 

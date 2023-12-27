@@ -172,6 +172,14 @@ impl<T: Type, D: Device<T>> NDArray<T, D> {
     pub fn index_rev<U: Unsigned, F: Device<U>>(&self, index: NDArray<U, F>, dim: usize) -> Self {
         self.0.device.index_rev(self, index, dim)
     }
+
+    pub fn split(&self, dim: usize, start: usize, len: usize) -> Self {
+        self.0.device.split(self, dim, start, len)
+    }
+
+    pub fn cat(args: &[Self], dim: usize, shape: Vec<usize>) -> Self {
+        args[0].0.device.cat(args, dim, shape)
+    }
 }
 
 impl<T: Float, D: Device<T>> NDArray<T, D> {
