@@ -98,6 +98,16 @@ pub struct Attention<T: Float, D: Device<T>> {
     mask: bool,
 }
 
+pub struct SwishFFN<T: Float, D: Device<T>> {
+    up: Linear<T, D>,
+    gate: Linear<T, D>,
+    down: Linear<T, D>,
+}
+
+pub struct TransformerBlock<T: Float, D: Device<T>> {
+    sequential: Sequential<T, D>,
+}
+
 #[derive(Clone)]
 pub struct RotaryEmbedding<T: Float, D: Device<T>> {
     sin: Tensor<T, D>,
@@ -385,6 +395,10 @@ impl<T: Float, D: Device<T>> Attention<T, D> {
         rotary_embedding: &RotaryEmbedding<T, D>,
     ) -> Self {
         let head_dim = dim / n_heads;
+        if head_dim != rotary_embedding.sin.shape()[1] {
+            panic!("The dimension of the rotary embedding must be equal to the dimension of the hidden state divided by the number of heads.");
+        }
+
         let hidden_dim = head_dim * n_heads;
         let w_q = Linear::new(dim, hidden_dim, false);
         let w_k = Linear::new(dim, hidden_dim, false);
@@ -448,10 +462,7 @@ impl<T: Float, D: Device<T>> Module<T, T, D> for Attention<T, D> {
         self.w_o.forward(
             &self
                 .dropout
-                .forward(&softmax(
-                    &q_k,
-                    len,
-                ))
+                .forward(&softmax(&q_k, len))
                 .matmul(&v)
                 .transpose(Some((len - 2, len - 1)))
                 .reshape(input.shape()),
@@ -485,6 +496,86 @@ impl<T: Float, D: Device<T>> Module<T, T, D> for Attention<T, D> {
     }
 }
 
+impl<T: Float, D: Device<T>> SwishFFN<T, D> {
+    pub fn new(dim: usize, hidden_dim: usize) -> Self {
+        Self {
+            up: Linear::new(dim, hidden_dim, false),
+            gate: Linear::new(dim, hidden_dim, false),
+            down: Linear::new(hidden_dim, dim, false),
+        }
+    }
+}
+
+impl<T: Float, D: Device<T>> Module<T, T, D> for SwishFFN<T, D> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
+        let gate = self.gate.forward(input);
+        let act = &gate / &(&(-&gate).exp() + T::one());
+        self.down.forward(&(&self.up.forward(input) * &act))
+    }
+
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
+        vec![
+            self.up.weight.clone(),
+            self.gate.weight.clone(),
+            self.down.weight.clone(),
+        ]
+    }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        vec![
+            self.up.weight.clone(),
+            self.gate.weight.clone(),
+            self.down.weight.clone(),
+        ]
+    }
+}
+
+impl<T: Float, D: Device<T> + 'static> TransformerBlock<T, D> {
+    pub fn new(
+        dim: usize,
+        n_heads: usize,
+        hidden_dim: usize,
+        mask: bool,
+        p: T,
+        rotary_embedding: &RotaryEmbedding<T, D>,
+    ) -> Self {
+        Self {
+            sequential: Sequential::new(vec![
+                Box::new(Residual::new(Box::new(Sequential::new(vec![
+                    Box::new(RMSNorm::new(dim, T::from(1e-5).unwrap())),
+                    Box::new(Attention::new(dim, n_heads, mask, p, rotary_embedding)),
+                ])))),
+                Box::new(Residual::new(Box::new(Sequential::new(vec![
+                    Box::new(RMSNorm::new(dim, T::from(1e-5).unwrap())),
+                    Box::new(SwishFFN::new(dim, hidden_dim)),
+                ])))),
+            ]),
+        }
+    }
+}
+
+impl<T: Float, D: Device<T>> Module<T, T, D> for TransformerBlock<T, D> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
+        self.sequential.forward(input)
+    }
+
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
+        self.sequential.parameters()
+    }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        self.sequential.state_dict()
+    }
+
+    fn train(&mut self) {
+        self.sequential.train()
+    }
+
+    fn eval(&mut self) {
+        self.sequential.eval()
+    }
+}
+
 impl<T: Float, D: Device<T>> RotaryEmbedding<T, D> {
     pub fn new(dim: usize, seq_len: usize, base: T) -> Self {
         let half_dim = T::from(dim / 2).unwrap();
@@ -492,8 +583,8 @@ impl<T: Float, D: Device<T>> RotaryEmbedding<T, D> {
         let inv_freq = &Tensor::ones_like(&freq, false) / &freq;
         let t = Tensor::arange(T::zero(), T::from(seq_len).unwrap(), T::one(), false);
         let t_freq = t
-            .reshape(vec![1, seq_len])
-            .matmul(&inv_freq.reshape(vec![dim / 2, 1]));
+            .reshape(vec![seq_len, 1])
+            .matmul(&inv_freq.reshape(vec![1, dim / 2]));
         let emb = t_freq.cat(&[&t_freq], 1);
         Self {
             sin: emb.sin(),
@@ -508,8 +599,8 @@ impl<T: Float, D: Device<T>> RotaryEmbedding<T, D> {
 
 fn rotate_half<T: Type, D: Device<T>>(hidden_state: &Tensor<T, D>) -> Tensor<T, D> {
     let dim = hidden_state.ndim() - 1;
-    let len = hidden_state.shape()[dim];
-    (-&hidden_state.split(dim, len / 2, len)).cat(&[&hidden_state.split(dim, 0, len)], dim)
+    let len = hidden_state.shape()[dim] / 2;
+    (-&hidden_state.split(dim, len, len)).cat(&[&hidden_state.split(dim, 0, len)], dim)
 }
 
 #[cfg(test)]
@@ -536,5 +627,31 @@ mod tests {
         let output = sequential.forward(&input);
         assert_eq!(output.shape(), &[2, 1]);
         assert_eq!(sequential.parameters().len(), 4);
+    }
+
+    #[test]
+    fn test_attention() {
+        let mut attention =
+            Attention::<f32, CPU>::new(4, 2, true, 0.1, &RotaryEmbedding::new(2, 4, 10000.));
+        let input = Tensor::ones(&[2, 4, 4], false);
+        let output = attention.forward(&input);
+        assert_eq!(output.shape(), &[2, 4, 4]);
+    }
+
+    #[test]
+    fn test_transformer_block() {
+        let mut transformer_block = TransformerBlock::<f32, CPU>::new(
+            4,
+            2,
+            8,
+            true,
+            0.1,
+            &RotaryEmbedding::new(2, 4, 10000.),
+        );
+        let input = Tensor::ones(&[2, 4, 4], true);
+        let output = transformer_block.forward(&input);
+        output.backward();
+        assert_eq!(output.shape(), &[2, 4, 4]);
+        println!("{}", input.grad().unwrap());
     }
 }
