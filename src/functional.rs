@@ -33,6 +33,12 @@ pub fn top1_accuracy<T: Float, U: Unsigned, D: Device<T>, E: Device<U>>(
     (&p.equal(&q).sum(None, false) / T::from(batch).unwrap()).underlying_data()[0]
 }
 
+pub fn softmax<T: Float, D: Device<T>>(logits: &Tensor<T, D>, dim: usize) -> Tensor<T, D> {
+    let max_logits = logits.max(Some(vec![dim]), true);
+    let l = (logits - &max_logits).exp();
+    &l / &l.sum(Some(vec![dim]), true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

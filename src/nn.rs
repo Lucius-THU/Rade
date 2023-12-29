@@ -1,4 +1,5 @@
 use crate::device::Device;
+use crate::functional::softmax;
 use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type, Unsigned};
 use bincode::config;
@@ -84,6 +85,24 @@ pub struct Dropout<T: Float> {
 pub struct Residual<T: Type, D: Device<T>>(Box<dyn Module<T, T, D>>);
 
 pub struct Embedding<T: Type, D: Device<T>>(Tensor<T, D>);
+
+pub struct Attention<T: Float, D: Device<T>> {
+    w_q: Linear<T, D>,
+    w_k: Linear<T, D>,
+    w_v: Linear<T, D>,
+    w_o: Linear<T, D>,
+    dropout: Dropout<T>,
+    rotary_embedding: RotaryEmbedding<T, D>,
+    n_heads: usize,
+    head_dim: usize,
+    mask: bool,
+}
+
+#[derive(Clone)]
+pub struct RotaryEmbedding<T: Float, D: Device<T>> {
+    sin: Tensor<T, D>,
+    cos: Tensor<T, D>,
+}
 
 impl<T: Float, D: Device<T>> Linear<T, D> {
     pub fn new(in_features: usize, out_features: usize, bias: bool) -> Self {
@@ -355,6 +374,142 @@ impl<T: Float, U: Unsigned, D: Device<T> + Device<U> + 'static> Module<T, U, D>
     fn state_dict(&self) -> Vec<Tensor<T, D>> {
         vec![self.0.clone()]
     }
+}
+
+impl<T: Float, D: Device<T>> Attention<T, D> {
+    pub fn new(
+        dim: usize,
+        n_heads: usize,
+        mask: bool,
+        p: T,
+        rotary_embedding: &RotaryEmbedding<T, D>,
+    ) -> Self {
+        let head_dim = dim / n_heads;
+        let hidden_dim = head_dim * n_heads;
+        let w_q = Linear::new(dim, hidden_dim, false);
+        let w_k = Linear::new(dim, hidden_dim, false);
+        let w_v = Linear::new(dim, hidden_dim, false);
+        let w_o = Linear::new(dim, hidden_dim, false);
+        let dropout = Dropout::new(p);
+        Self {
+            w_q,
+            w_k,
+            w_v,
+            w_o,
+            dropout,
+            rotary_embedding: rotary_embedding.clone(),
+            n_heads,
+            head_dim,
+            mask,
+        }
+    }
+}
+
+impl<T: Float, D: Device<T>> Module<T, T, D> for Attention<T, D> {
+    fn forward(&mut self, input: &Tensor<T, D>) -> Tensor<T, D> {
+        let mut shape = input.shape();
+        let len = shape.len();
+        let scale = T::from(self.head_dim).unwrap().sqrt();
+        let seq_len = shape[len - 2];
+        shape[len - 1] = self.n_heads;
+        shape.push(self.head_dim);
+        let q = self
+            .w_q
+            .forward(input)
+            .reshape(shape.clone())
+            .transpose(Some((len - 2, len - 1)));
+        let k = self
+            .w_k
+            .forward(input)
+            .reshape(shape.clone())
+            .transpose(Some((len - 2, len - 1)));
+        let v = self
+            .w_v
+            .forward(input)
+            .reshape(shape.clone())
+            .transpose(Some((len - 2, len - 1)));
+        let (sin, cos) = self.rotary_embedding.forward(seq_len);
+        let q_embed = &(&(&q * &cos) + &(&rotate_half(&q) * &sin)) / scale;
+        let k_embed = &(&k * &cos) + &(&rotate_half(&k) * &sin);
+        let mut q_k = q_embed.matmul(&k_embed.transpose(Some((len - 1, len))));
+        if self.mask {
+            let mut mask = Vec::with_capacity(seq_len * seq_len);
+            for i in 0..seq_len {
+                for j in 0..seq_len {
+                    if i < j {
+                        mask.push(T::neg_infinity());
+                    } else {
+                        mask.push(T::zero());
+                    }
+                }
+            }
+            q_k = &q_k + &Tensor::new_with_shape(&mask, &[seq_len, seq_len], false);
+        }
+        self.w_o.forward(
+            &self
+                .dropout
+                .forward(&softmax(
+                    &q_k,
+                    len,
+                ))
+                .matmul(&v)
+                .transpose(Some((len - 2, len - 1)))
+                .reshape(input.shape()),
+        )
+    }
+
+    fn parameters(&self) -> Vec<Tensor<T, D>> {
+        vec![
+            self.w_q.weight.clone(),
+            self.w_k.weight.clone(),
+            self.w_v.weight.clone(),
+            self.w_o.weight.clone(),
+        ]
+    }
+
+    fn state_dict(&self) -> Vec<Tensor<T, D>> {
+        vec![
+            self.w_q.weight.clone(),
+            self.w_k.weight.clone(),
+            self.w_v.weight.clone(),
+            self.w_o.weight.clone(),
+        ]
+    }
+
+    fn train(&mut self) {
+        <Dropout<T> as Module<T, T, D>>::train(&mut self.dropout);
+    }
+
+    fn eval(&mut self) {
+        <Dropout<T> as Module<T, T, D>>::eval(&mut self.dropout);
+    }
+}
+
+impl<T: Float, D: Device<T>> RotaryEmbedding<T, D> {
+    pub fn new(dim: usize, seq_len: usize, base: T) -> Self {
+        let half_dim = T::from(dim / 2).unwrap();
+        let freq = base.powt(&(&Tensor::arange(T::zero(), half_dim, T::one(), false) / half_dim));
+        let inv_freq = &Tensor::ones_like(&freq, false) / &freq;
+        let t = Tensor::arange(T::zero(), T::from(seq_len).unwrap(), T::one(), false);
+        let t_freq = t
+            .reshape(vec![1, seq_len])
+            .matmul(&inv_freq.reshape(vec![dim / 2, 1]));
+        let emb = t_freq.cat(&[&t_freq], 1);
+        Self {
+            sin: emb.sin(),
+            cos: emb.cos(),
+        }
+    }
+
+    pub fn forward(&self, seq_len: usize) -> (Tensor<T, D>, Tensor<T, D>) {
+        (self.sin.split(0, 0, seq_len), self.cos.split(0, 0, seq_len))
+    }
+}
+
+fn rotate_half<T: Type, D: Device<T>>(hidden_state: &Tensor<T, D>) -> Tensor<T, D> {
+    let dim = hidden_state.ndim() - 1;
+    let len = hidden_state.shape()[dim];
+    (-&hidden_state.split(dim, len / 2, len)).cat(&[&hidden_state.split(dim, 0, len)], dim)
 }
 
 #[cfg(test)]

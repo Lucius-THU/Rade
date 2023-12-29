@@ -13,6 +13,8 @@ pub trait Device<T: Type>: Clone {
 
     fn zeros(shape: &[usize]) -> NDArray<T, Self>;
 
+    fn arange(start: T, end: T, step: T) -> NDArray<T, Self>;
+
     fn one_hot<U: Unsigned, D: Device<U>>(
         indices: &NDArray<U, D>,
         num_classes: usize,
@@ -94,13 +96,13 @@ pub trait Device<T: Type>: Clone {
 
     fn cat(&self, args: &[NDArray<T, Self>], dim: usize, shape: Vec<usize>) -> NDArray<T, Self>;
 
-    fn split(
-        &self,
-        lhs: &NDArray<T, Self>,
-        dim: usize,
-        start: usize,
-        len: usize,
-    ) -> NDArray<T, Self>;
+    fn sin(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>
+    where
+        T: Float;
+
+    fn cos(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>
+    where
+        T: Float;
 
     fn data(lhs: &NDArray<T, Self>) -> Vec<T>;
 

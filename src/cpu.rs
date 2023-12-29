@@ -47,12 +47,8 @@ impl CPU {
         rhs: &NDArray<T, Self>,
         op: impl Fn(T, T) -> T,
     ) -> NDArray<T, Self> {
-        if !lhs.is_contiguous() {
-            return self.ewise_op(&CPU.contiguous(lhs), rhs, op);
-        }
-        if !rhs.is_contiguous() {
-            return self.ewise_op(lhs, &CPU.contiguous(rhs), op);
-        }
+        let lhs = CPU.contiguous(lhs);
+        let rhs = CPU.contiguous(rhs);
         if let (Storage::CPU(lhs_data), Storage::CPU(rhs_data)) =
             (lhs.0.data.as_ref(), rhs.0.data.as_ref())
         {
@@ -152,6 +148,18 @@ impl<T: CPUType> Device<T> for CPU {
         )
     }
 
+    fn arange(start: T, end: T, step: T) -> NDArray<T, Self> {
+        let mut data = vec![];
+        let mut i = start;
+        while i < end {
+            data.push(i);
+            i += step;
+        }
+        let shape = vec![data.len()];
+        let strides = ndarray::compact_strides(&shape);
+        NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
+    }
+
     fn one_hot<U: Unsigned, D: Device<U>>(
         indices: &NDArray<U, D>,
         num_classes: usize,
@@ -232,12 +240,8 @@ impl<T: CPUType> Device<T> for CPU {
     }
 
     fn eq(&self, lhs: &NDArray<T, Self>, rhs: &NDArray<T, Self>) -> bool {
-        if !lhs.is_contiguous() {
-            return self.eq(&lhs.contiguous(), rhs);
-        }
-        if !rhs.is_contiguous() {
-            return self.eq(lhs, &rhs.contiguous());
-        }
+        let lhs = CPU.contiguous(lhs);
+        let rhs = CPU.contiguous(rhs);
         if let (Storage::CPU(lhs_data), Storage::CPU(rhs_data)) =
             (lhs.0.data.as_ref(), rhs.0.data.as_ref())
         {
@@ -381,9 +385,7 @@ impl<T: CPUType> Device<T> for CPU {
         lhs: &NDArray<T, Self>,
         index: NDArray<U, F>,
     ) -> NDArray<T, Self> {
-        if !lhs.is_contiguous() {
-            return self.index(&CPU.contiguous(lhs), index);
-        }
+        let lhs = CPU.contiguous(lhs);
         if let Storage::CPU(lhs_data) = lhs.0.data.as_ref() {
             let mut shape = index.shape().to_vec();
             let len = lhs.len() / lhs.shape()[0];
@@ -411,9 +413,7 @@ impl<T: CPUType> Device<T> for CPU {
         index: NDArray<U, F>,
         dim: usize,
     ) -> NDArray<T, Self> {
-        if !lhs.is_contiguous() {
-            return self.index_rev(&CPU.contiguous(lhs), index, dim);
-        }
+        let lhs = CPU.contiguous(lhs);
         if let Storage::CPU(lhs_data) = lhs.0.data.as_ref() {
             let mut shape = vec![dim];
             shape.extend(&lhs.shape()[index.ndim()..]);
@@ -439,15 +439,7 @@ impl<T: CPUType> Device<T> for CPU {
     }
 
     fn cat(&self, args: &[NDArray<T, Self>], dim: usize, shape: Vec<usize>) -> NDArray<T, Self> {
-        for arg in args {
-            if !arg.is_contiguous() {
-                return self.cat(
-                    &args.iter().map(|x| CPU.contiguous(x)).collect::<Vec<_>>(),
-                    dim,
-                    shape,
-                );
-            }
-        }
+        let args = args.iter().map(|x| CPU.contiguous(x)).collect::<Vec<_>>();
         let strides = ndarray::compact_strides(&shape);
         let mut data = Vec::with_capacity(shape[0] * strides[0]);
         let cnt = args.len();
@@ -480,41 +472,18 @@ impl<T: CPUType> Device<T> for CPU {
         NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
     }
 
-    fn split(
-        &self,
-        lhs: &NDArray<T, Self>,
-        dim: usize,
-        start: usize,
-        len: usize,
-    ) -> NDArray<T, Self> {
-        if !lhs.is_contiguous() {
-            return self.split(&CPU.contiguous(lhs), dim, start, len);
-        }
-        if let Storage::CPU(lhs_data) = lhs.0.data.as_ref() {
-            let mut shape = lhs.shape().to_vec();
-            let ord_dim = shape[dim];
-            shape[dim] = len;
-            let strides = ndarray::compact_strides(&shape);
-            let mut idx = Idx::new(lhs, dim + 1);
-            let offset = lhs.0.offset;
-            let mut data = Vec::with_capacity(shape[0] * strides[0]);
-            for _ in 0..shape[..dim].iter().product() {
-                for _ in 0..start {
-                    idx.next();
-                }
-                for _ in 0..len {
-                    let l = idx.get(offset);
-                    data.extend_from_slice(&lhs_data[l..l + strides[dim]]);
-                    idx.next();
-                }
-                for _ in start + len..ord_dim {
-                    idx.next();
-                }
-            }
-            NDArray::make(Storage::CPU(data), shape, strides, 0, Self)
-        } else {
-            panic!("Tensor Storage mismatched with Device.")
-        }
+    fn sin(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>
+    where
+        T: Float,
+    {
+        self.scalar_op(lhs, T::zero(), |x, _| x.sin())
+    }
+
+    fn cos(&self, lhs: &NDArray<T, Self>) -> NDArray<T, Self>
+    where
+        T: Float,
+    {
+        self.scalar_op(lhs, T::zero(), |x, _| x.cos())
     }
 
     fn data(lhs: &NDArray<T, Self>) -> Vec<T> {

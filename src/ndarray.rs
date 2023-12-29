@@ -174,11 +174,28 @@ impl<T: Type, D: Device<T>> NDArray<T, D> {
     }
 
     pub fn split(&self, dim: usize, start: usize, len: usize) -> Self {
-        self.0.device.split(self, dim, start, len)
+        let mut out = self.clone();
+        Arc::make_mut(&mut out.0).offset = self.0.offset + start * self.0.strides[dim];
+        Arc::make_mut(&mut out.0).shape[dim] = len;
+        out
     }
 
     pub fn cat(args: &[Self], dim: usize, shape: Vec<usize>) -> Self {
         args[0].0.device.cat(args, dim, shape)
+    }
+
+    pub fn sin(&self) -> Self
+    where
+        T: Float,
+    {
+        self.0.device.sin(self)
+    }
+
+    pub fn cos(&self) -> Self
+    where
+        T: Float,
+    {
+        self.0.device.cos(self)
     }
 }
 

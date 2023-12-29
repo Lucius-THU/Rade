@@ -1,9 +1,9 @@
 use crate::device::Device;
 use crate::ndarray::NDArray;
 use crate::operation::{
-    AddScalar, Broadcast, Cat, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, EWiseSub, Equal,
-    GTScalar, Index, IndexRev, Ln, Matmul, Max, MaximumScalar, MulScalar, Operation, PowScalar,
-    Reshape, ScalarDiv, ScalarSub, Split, Sqrt, Summation, Transpose,
+    AddScalar, Broadcast, Cat, Cos, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, EWiseSub,
+    Equal, GTScalar, Index, IndexRev, Ln, Matmul, Max, MaximumScalar, MulScalar, Operation,
+    PowScalar, Reshape, ScalarDiv, ScalarSub, Sin, Split, Sqrt, Summation, Transpose,
 };
 use crate::type_trait::{Float, Len, Signed, Type, Unsigned};
 use bincode::de::Decoder;
@@ -74,6 +74,15 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
 
     pub fn zeros(shape: &[usize], requires_grad: bool) -> Self {
         Self::make(Some(D::zeros(shape)), vec![], None, requires_grad)
+    }
+
+    pub fn arange(start: T, end: T, step: T, requires_grad: bool) -> Self {
+        Self::make(
+            Some(D::arange(start, end, step)),
+            vec![],
+            None,
+            requires_grad,
+        )
     }
 
     pub fn ones_like(&self, requires_grad: bool) -> Self {
@@ -176,6 +185,9 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
                 if let Some(op) = &value.op {
                     let in_grads = op.gradient(grad.as_ref().unwrap(), &node);
                     for (i, input) in value.inputs.iter().enumerate() {
+                        if !input.0.read().unwrap().requires_grad {
+                            continue;
+                        }
                         grads
                             .entry(input.1)
                             .or_insert_with(|| vec![])
@@ -317,6 +329,14 @@ impl<T: Float, D: Device<T>> Tensor<T, D> {
 
     pub fn exp(&self) -> Self {
         T::exp(T::one()).powt(self)
+    }
+
+    pub fn sin(&self) -> Self {
+        Tensor::calc(Sin, vec![self.clone()])
+    }
+
+    pub fn cos(&self) -> Self {
+        Tensor::calc(Cos, vec![self.clone()])
     }
 
     pub fn kaiming_uniform(fan_in: usize, fan_out: usize, requires_grad: bool) -> Self {

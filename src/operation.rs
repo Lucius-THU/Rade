@@ -67,6 +67,10 @@ pub(crate) struct Cat(pub usize);
 
 pub(crate) struct Split(pub usize, pub usize, pub usize);
 
+pub(crate) struct Sin;
+
+pub(crate) struct Cos;
+
 impl<T: Type, D: Device<T>> Operation<T, D> for Broadcast {
     fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
         args[0].broadcast(&self.0)
@@ -482,6 +486,26 @@ impl<T: Type, D: Device<T>> Operation<T, D> for Split {
         shape[self.0] = self.1;
         let first = Tensor::zeros(&shape, requires_grad);
         vec![first.cat(&[out_grad, &third], self.0)]
+    }
+}
+
+impl<T: Float, D: Device<T>> Operation<T, D> for Sin {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].sin()
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        vec![out_grad * &node.0.read().unwrap().inputs[0].cos()]
+    }
+}
+
+impl<T: Float, D: Device<T>> Operation<T, D> for Cos {
+    fn compute(&self, args: &[NDArray<T, D>]) -> NDArray<T, D> {
+        args[0].cos()
+    }
+
+    fn gradient(&self, out_grad: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
+        vec![out_grad * &-&node.0.read().unwrap().inputs[0].sin()]
     }
 }
 
