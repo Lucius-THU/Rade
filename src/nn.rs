@@ -1,3 +1,5 @@
+pub mod model;
+
 use crate::device::Device;
 use crate::functional::softmax;
 use crate::tensor::Tensor;
@@ -652,6 +654,5 @@ mod tests {
         let output = transformer_block.forward(&input);
         output.backward();
         assert_eq!(output.shape(), &[2, 4, 4]);
-        println!("{}", input.grad().unwrap());
     }
 }
