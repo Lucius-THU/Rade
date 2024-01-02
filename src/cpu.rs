@@ -488,7 +488,8 @@ impl<T: CPUType> Device<T> for CPU {
 
     fn data(lhs: &NDArray<T, Self>) -> Vec<T> {
         if let Storage::CPU(data) = lhs.0.data.as_ref() {
-            data.clone()
+            let cnt = lhs.len();
+            data[lhs.0.offset..cnt + lhs.0.offset].to_vec()
         } else {
             panic!("Tensor Storage mismatched with Device")
         }

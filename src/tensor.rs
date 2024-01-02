@@ -163,7 +163,7 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
 
     /// TODO: This function is not efficient and elegant.
     pub fn underlying_data(&self) -> Vec<T> {
-        D::data(&self.realize_cached_data())
+        D::data(&self.realize_cached_data().contiguous())
     }
 
     pub fn backward(&self) {
@@ -175,9 +175,9 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
         for node in stack.iter().rev() {
             let grad = grads[&node.1].iter().fold(None, |acc, x| {
                 if acc.is_none() {
-                    Some(x.clone())
+                    Some(x.detach(false))
                 } else {
-                    Some(&acc.unwrap() + x)
+                    Some((&acc.unwrap() + x).detach(false))
                 }
             });
             {

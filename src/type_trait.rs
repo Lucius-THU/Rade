@@ -2,7 +2,7 @@ use crate::device::Device;
 use crate::operation::ScalarPow;
 use crate::tensor::Tensor;
 use bincode::{Decode, Encode};
-use num_traits::{Bounded, Num, Pow, ToPrimitive};
+use num_traits::{Bounded, Num, NumCast, Pow, ToPrimitive};
 use rand::distributions::uniform::SampleUniform;
 use std::fmt::Display;
 use std::ops::{AddAssign, Index, MulAssign};
@@ -82,6 +82,6 @@ pub trait Signed: Type + num_traits::Signed + ToPrimitive {}
 
 impl<T: Type + num_traits::Signed + ToPrimitive> Signed for T {}
 
-pub trait Unsigned: Type + num_traits::Unsigned + ToPrimitive {}
+pub trait Unsigned: Type + num_traits::Unsigned + ToPrimitive + NumCast {}
 
-impl<T: Type + num_traits::Unsigned + ToPrimitive> Unsigned for T {}
+impl<T: Type + num_traits::Unsigned + ToPrimitive + NumCast> Unsigned for T {}

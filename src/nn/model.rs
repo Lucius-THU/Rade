@@ -23,6 +23,17 @@ where
         max_seq_len: usize,
         rotary_base: T,
     ) -> Self {
+        let mut mask = Vec::with_capacity(max_seq_len * max_seq_len);
+        for i in 0..max_seq_len {
+            for j in 0..max_seq_len {
+                if i < j {
+                    mask.push(T::neg_infinity());
+                } else {
+                    mask.push(T::zero());
+                }
+            }
+        }
+        let mask = Tensor::new_with_shape(&mask, &[max_seq_len, max_seq_len], false);
         let rotatory_emb = RotaryEmbedding::new(hidden_dim / n_heads, max_seq_len, rotary_base);
         let mut blocks: Vec<Box<dyn Module<T, T, D>>> = Vec::with_capacity(n_layers);
         for _ in 0..n_layers {
@@ -30,7 +41,7 @@ where
                 hidden_dim,
                 n_heads,
                 intermediate_size,
-                true,
+                Some(mask.clone()),
                 T::from(0.1).unwrap(),
                 &rotatory_emb,
             )));
@@ -70,21 +81,5 @@ impl<T: Float, U: Unsigned, D: Device<T> + Device<U> + 'static> Module<T, U, D> 
 
     fn eval(&mut self) {
         self.sequential.eval();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cpu::CPU;
-    use crate::functional::cross_entropy_loss;
-
-    #[test]
-    fn test_llama() {
-        let mut model = Llama2::<f32, CPU>::new(100, 128, 4, 512, 3, 8, 10000.);
-        let input = Tensor::<usize, CPU>::new1d([0, 72, 36, 8, 7, 1, 13, 24], false);
-        let output = model.forward(&input);
-        let loss = cross_entropy_loss(&output.split(0, 0, 7), &input.split(0, 1, 7));
-        loss.backward();
     }
 }

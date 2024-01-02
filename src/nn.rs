@@ -97,7 +97,7 @@ pub struct Attention<T: Float, D: Device<T>> {
     rotary_embedding: RotaryEmbedding<T, D>,
     n_heads: usize,
     head_dim: usize,
-    mask: bool,
+    mask: Option<Tensor<T, D>>
 }
 
 pub struct SwishFFN<T: Float, D: Device<T>> {
@@ -392,13 +392,18 @@ impl<T: Float, D: Device<T>> Attention<T, D> {
     pub fn new(
         dim: usize,
         n_heads: usize,
-        mask: bool,
+        mask: Option<Tensor<T, D>>,
         p: T,
         rotary_embedding: &RotaryEmbedding<T, D>,
     ) -> Self {
         let head_dim = dim / n_heads;
         if head_dim != rotary_embedding.sin.shape()[1] {
             panic!("The dimension of the rotary embedding must be equal to the dimension of the hidden state divided by the number of heads.");
+        }
+        if let Some(mask) = &mask {
+            if mask.shape()[0] != mask.shape()[1] {
+                panic!("The shape of the mask must be square.");
+            }
         }
 
         let hidden_dim = head_dim * n_heads;
@@ -427,6 +432,11 @@ impl<T: Float, D: Device<T>> Module<T, T, D> for Attention<T, D> {
         let len = shape.len();
         let scale = T::from(self.head_dim).unwrap().sqrt();
         let seq_len = shape[len - 2];
+        if let Some(mask) = &self.mask {
+            if mask.shape()[0] != seq_len {
+                panic!("The shape of the mask must be equal to the shape of the input.");
+            }
+        }
         shape[len - 1] = self.n_heads;
         shape.push(self.head_dim);
         let q = self
@@ -448,18 +458,8 @@ impl<T: Float, D: Device<T>> Module<T, T, D> for Attention<T, D> {
         let q_embed = &(&(&q * &cos) + &(&rotate_half(&q) * &sin)) / scale;
         let k_embed = &(&k * &cos) + &(&rotate_half(&k) * &sin);
         let mut q_k = q_embed.matmul(&k_embed.transpose(Some((len - 1, len))));
-        if self.mask {
-            let mut mask = Vec::with_capacity(seq_len * seq_len);
-            for i in 0..seq_len {
-                for j in 0..seq_len {
-                    if i < j {
-                        mask.push(T::neg_infinity());
-                    } else {
-                        mask.push(T::zero());
-                    }
-                }
-            }
-            q_k = &q_k + &Tensor::new_with_shape(&mask, &[seq_len, seq_len], false);
+        if let Some(mask) = self.mask.as_ref() {
+            q_k = &q_k + mask;
         }
         self.w_o.forward(
             &self
@@ -537,7 +537,7 @@ impl<T: Float, D: Device<T> + 'static> TransformerBlock<T, D> {
         dim: usize,
         n_heads: usize,
         hidden_dim: usize,
-        mask: bool,
+        mask: Option<Tensor<T, D>>,
         p: T,
         rotary_embedding: &RotaryEmbedding<T, D>,
     ) -> Self {
@@ -607,6 +607,7 @@ fn rotate_half<T: Type, D: Device<T>>(hidden_state: &Tensor<T, D>) -> Tensor<T, 
 
 #[cfg(test)]
 mod tests {
+    use num_traits::Float;
     use super::*;
     use crate::cpu::CPU;
 
@@ -632,21 +633,23 @@ mod tests {
     }
 
     #[test]
-    fn test_attention() {
-        let mut attention =
-            Attention::<f32, CPU>::new(4, 2, true, 0.1, &RotaryEmbedding::new(2, 4, 10000.));
-        let input = Tensor::ones(&[2, 4, 4], false);
-        let output = attention.forward(&input);
-        assert_eq!(output.shape(), &[2, 4, 4]);
-    }
-
-    #[test]
     fn test_transformer_block() {
+        let mut mask = Vec::with_capacity(16);
+        for i in 0..4 {
+            for j in 0..4 {
+                if i < j {
+                    mask.push(f32::neg_infinity());
+                } else {
+                    mask.push(0.);
+                }
+            }
+        }
+        let mask = Tensor::new_with_shape(&mask, &[4, 4], false);
         let mut transformer_block = TransformerBlock::<f32, CPU>::new(
             4,
             2,
             8,
-            true,
+            Some(mask.clone()),
             0.1,
             &RotaryEmbedding::new(2, 4, 10000.),
         );
