@@ -138,7 +138,10 @@ impl<T: Type, D: Device<T>> Operation<T, D> for Equal {
 
     fn gradient(&self, _: &Tensor<T, D>, node: &Tensor<T, D>) -> Vec<Tensor<T, D>> {
         let inputs = &node.0.read().unwrap().inputs;
-        vec![Tensor::zeros_like(&inputs[0], false), Tensor::zeros_like(&inputs[1], false)]
+        vec![
+            Tensor::zeros_like(&inputs[0], false),
+            Tensor::zeros_like(&inputs[1], false),
+        ]
     }
 }
 

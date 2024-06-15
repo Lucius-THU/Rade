@@ -11,7 +11,7 @@ pub fn cross_entropy_loss<T: Float, U: Unsigned, D: Device<T> + Device<U>>(
 ) -> Tensor<T, D> {
     let mut shape = logits.shape();
     let num_classes = shape.pop().unwrap();
-    let mut batch= T::from(shape.iter().product::<usize>()).unwrap();
+    let mut batch = T::from(shape.iter().product::<usize>()).unwrap();
     if let Some(mask) = mask.as_ref() {
         let t = mask.sum(None, false).underlying_data()[0];
         batch = batch / T::from(mask.realize_cached_data().len()).unwrap() * t;

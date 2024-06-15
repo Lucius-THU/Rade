@@ -1,16 +1,18 @@
 use crate::device::Device;
 use crate::operation::ScalarPow;
 use crate::tensor::Tensor;
-use bincode::{Decode, Encode};
+pub use half::f16;
 use num_traits::{Bounded, Num, NumCast, Pow, ToPrimitive};
 use rand::distributions::uniform::SampleUniform;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::fmt::Display;
 use std::ops::{AddAssign, Index, MulAssign};
 
 pub trait Type:
     'static
-    + Encode
-    + Decode
+    + DeserializeOwned
+    + Serialize
     + Num
     + Bounded
     + SampleUniform
@@ -30,6 +32,12 @@ pub trait Type:
         } else {
             *self
         }
+    }
+}
+
+impl Type for f16 {
+    fn atol() -> Self {
+        f16::from_f32(1e-2)
     }
 }
 

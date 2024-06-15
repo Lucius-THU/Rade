@@ -3,13 +3,11 @@ use crate::device::Device;
 use crate::ndarray::{self, Idx, NDArray, Storage};
 use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type, Unsigned};
-use bincode::de::Decoder;
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
-use bincode::{Decode, Encode};
+use bincode::ErrorKind;
 use num_traits::Pow;
 use rand_distr::{Distribution, Normal, StandardNormal, Uniform};
 use std::fmt::{self, Display, Formatter};
+use std::fs::File;
 use std::slice;
 
 pub(crate) mod ops;
@@ -114,6 +112,10 @@ impl CPU {
 }
 
 impl<T: CPUType> Device<T> for CPU {
+    fn device() -> Self {
+        Self
+    }
+
     fn new(data: *mut T, shape: &[usize]) -> NDArray<T, Self> {
         let strides = ndarray::compact_strides(shape);
         let len = shape[0] * strides[0];
@@ -249,7 +251,7 @@ impl<T: CPUType> Device<T> for CPU {
             lhs_data[lhs.0.offset..lhs.0.offset + len]
                 .iter()
                 .zip(&rhs_data[rhs.0.offset..rhs.0.offset + len])
-                .all(|(&x, &y)| (x - y).abs() < T::atol())
+                .all(|(&x, &y)| (x - y).abs() <= T::atol())
         } else {
             panic!("Tensor Storage mismatched with Device.")
         }
@@ -495,23 +497,17 @@ impl<T: CPUType> Device<T> for CPU {
         }
     }
 
-    fn encode<E: Encoder>(encoder: &mut E, lhs: &NDArray<T, Self>) -> Result<(), EncodeError> {
+    fn encode(lhs: &NDArray<T, Self>, file: &mut File) -> Result<(), bincode::Error> {
         if let Storage::CPU(data) = lhs.0.data.as_ref() {
-            Encode::encode(data, encoder)?;
-            Encode::encode(&lhs.0.shape, encoder)?;
-            Ok(())
+            bincode::serialize_into(file, &data)
         } else {
-            Err(EncodeError::Other(
-                "Storage type does not compatible with CPU.",
-            ))
+            Err(ErrorKind::Custom("Storage type does not compatible with CPU.".to_string()).into())
         }
     }
 
-    fn decode<D: Decoder>(decoder: &mut D) -> Result<NDArray<T, Self>, DecodeError> {
-        let data = Decode::decode(decoder)?;
-        let shape: Vec<usize> = Decode::decode(decoder)?;
-        let strides = ndarray::compact_strides(&shape);
-        Ok(NDArray::make(Storage::CPU(data), shape, strides, 0, Self))
+    fn decode(file: &mut File) -> Result<Storage<T>, bincode::Error> {
+        let data = bincode::deserialize_from(file)?;
+        Ok(Storage::CPU(data))
     }
 }
 

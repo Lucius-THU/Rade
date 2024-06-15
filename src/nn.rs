@@ -4,8 +4,7 @@ use crate::device::Device;
 use crate::functional::softmax;
 use crate::tensor::Tensor;
 use crate::type_trait::{Float, Type, Unsigned};
-use bincode::config;
-use bincode::error::{DecodeError, EncodeError};
+use bincode::ErrorKind;
 use rand_distr::{Distribution, StandardNormal};
 use std::{fs, path::Path};
 
@@ -16,41 +15,35 @@ pub trait Module<T: Type, U: Type, D: Device<T> + Device<U>> {
     fn train(&mut self) {}
     fn eval(&mut self) {}
 
-    fn save(&self, path: &str) -> Result<(), EncodeError> {
+    fn save(&self, path: &str) -> Result<(), bincode::Error> {
         let msg = "File cannot be created.";
         if let Some(p) = Path::new(path).parent() {
             if let Err(_) = fs::create_dir_all(p) {
-                Err(EncodeError::Other(msg))
+                Err(ErrorKind::Custom(msg.to_string()).into())
             } else {
                 if let Ok(mut file) = fs::File::create(path) {
                     for parameter in self.state_dict() {
-                        bincode::encode_into_std_write(parameter, &mut file, config::standard())?;
+                        parameter.serialize_into(&mut file)?;
                     }
                     Ok(())
                 } else {
-                    Err(EncodeError::Other(msg))
+                    Err(ErrorKind::Custom(msg.to_string()).into())
                 }
             }
         } else {
-            Err(EncodeError::OtherString(format!(
-                "{} is not a valid path.",
-                path
-            )))
+            Err(ErrorKind::Custom(format!("{} is not a valid path.", path)).into())
         }
     }
 
-    fn load(&mut self, path: &str) -> Result<(), DecodeError> {
+    fn load(&mut self, path: &str) -> Result<(), bincode::Error> {
         if let Ok(mut file) = fs::File::open(path) {
             for parameter in self.state_dict() {
-                parameter.set_data(bincode::decode_from_std_read(
-                    &mut file,
-                    config::standard(),
-                )?);
+                parameter.deserialize(&mut file)?;
             }
             self.eval();
             Ok(())
         } else {
-            Err(DecodeError::Other("File not found."))
+            Err(ErrorKind::Custom("File not found.".to_string()).into())
         }
     }
 }
@@ -97,7 +90,7 @@ pub struct Attention<T: Float, D: Device<T>> {
     rotary_embedding: RotaryEmbedding<T, D>,
     n_heads: usize,
     head_dim: usize,
-    mask: Option<Tensor<T, D>>
+    mask: Option<Tensor<T, D>>,
 }
 
 pub struct SwishFFN<T: Float, D: Device<T>> {
@@ -607,9 +600,9 @@ fn rotate_half<T: Type, D: Device<T>>(hidden_state: &Tensor<T, D>) -> Tensor<T, 
 
 #[cfg(test)]
 mod tests {
-    use num_traits::Float;
     use super::*;
     use crate::cpu::CPU;
+    use num_traits::Float;
 
     #[test]
     fn test_linear() {

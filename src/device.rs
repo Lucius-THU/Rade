@@ -1,12 +1,12 @@
-use crate::ndarray::NDArray;
+use crate::ndarray::{NDArray, Storage};
 use crate::type_trait::{Float, Type, Unsigned};
-use bincode::de::Decoder;
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
 use num_traits::Pow;
 use rand_distr::{Distribution, StandardNormal};
+use std::fs::File;
 
 pub trait Device<T: Type>: Clone {
+    fn device() -> Self;
+
     fn new(data: *mut T, shape: &[usize]) -> NDArray<T, Self>;
 
     fn ones(shape: &[usize]) -> NDArray<T, Self>;
@@ -106,7 +106,7 @@ pub trait Device<T: Type>: Clone {
 
     fn data(lhs: &NDArray<T, Self>) -> Vec<T>;
 
-    fn encode<E: Encoder>(encoder: &mut E, lhs: &NDArray<T, Self>) -> Result<(), EncodeError>;
+    fn encode(lhs: &NDArray<T, Self>, file: &mut File) -> Result<(), bincode::Error>;
 
-    fn decode<D: Decoder>(decoder: &mut D) -> Result<NDArray<T, Self>, DecodeError>;
+    fn decode(file: &mut File) -> Result<Storage<T>, bincode::Error>;
 }

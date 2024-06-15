@@ -1,4 +1,5 @@
 use crate::device::Device;
+use crate::ndarray;
 use crate::ndarray::NDArray;
 use crate::operation::{
     AddScalar, Broadcast, Cat, Cos, DivScalar, EWiseAdd, EWiseDiv, EWiseMul, EWisePow, EWiseSub,
@@ -6,13 +7,11 @@ use crate::operation::{
     PowScalar, Reshape, ScalarDiv, ScalarSub, Sin, Split, Sqrt, Summation, Transpose,
 };
 use crate::type_trait::{Float, Len, Signed, Type, Unsigned};
-use bincode::de::Decoder;
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
-use bincode::{Decode, Encode};
+use bincode::ErrorKind;
 use num_traits::Pow;
 use rand_distr::{Distribution, StandardNormal};
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
@@ -266,6 +265,38 @@ impl<T: Type, D: Device<T>> Tensor<T, D> {
 
     pub fn split(&self, dim: usize, start: usize, len: usize) -> Self {
         Tensor::calc(Split(dim, start, len), vec![self.clone()])
+    }
+
+    pub fn serialize_into(&self, file: &mut File) -> Result<(), bincode::Error> {
+        if self.0.read().unwrap().inputs.len() > 0 {
+            Err(
+                ErrorKind::Custom("Tensors with operations can't be serialized.".to_string())
+                    .into(),
+            )
+        } else {
+            let data = self.data();
+            if data.is_none() {
+                Err(ErrorKind::Custom("Tensor data is not available.".to_string()).into())
+            } else {
+                let mut value = data.as_ref().unwrap();
+                let new_value;
+                if !value.is_contiguous() {
+                    new_value = value.contiguous();
+                    value = &new_value;
+                }
+                D::encode(value, file)?;
+                bincode::serialize_into(file, value.shape())
+            }
+        }
+    }
+
+    pub fn deserialize(&self, file: &mut File) -> Result<(), bincode::Error> {
+        let data = D::decode(file)?;
+        let shape: Vec<usize> = bincode::deserialize_from(file)?;
+        let strides = ndarray::compact_strides(&shape);
+        self.0.write().unwrap().cached_data =
+            Some(NDArray::make(data, shape, strides, 0, D::device()));
+        Ok(())
     }
 
     pub(crate) fn realize_cached_data(&self) -> NDArray<T, D> {
@@ -522,37 +553,6 @@ impl_add!(isize, i8, i16, i32, i64, f32, f64);
 impl_mul!(isize, i8, i16, i32, i64, f32, f64);
 
 impl_sub!(isize, i8, i16, i32, i64, f32, f64);
-
-impl<T: Type, D: Device<T>> Encode for Tensor<T, D> {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        if self.0.read().unwrap().inputs.len() > 0 {
-            Err(EncodeError::Other("Tensors with inputs can't be encoded."))
-        } else {
-            let data = self.data();
-            if data.is_none() {
-                Err(EncodeError::Other(
-                    "Tensors without underlying data can't be encoded.",
-                ))
-            } else {
-                let mut value = data.as_ref().unwrap();
-                let new_value;
-                if !value.is_contiguous() {
-                    new_value = value.contiguous();
-                    value = &new_value;
-                }
-                D::encode(encoder, value)?;
-                Ok(())
-            }
-        }
-    }
-}
-
-impl<T: Type, D: Device<T>> Decode for Tensor<T, D> {
-    fn decode<U: Decoder>(decoder: &mut U) -> Result<Self, DecodeError> {
-        let data = D::decode(decoder)?;
-        Ok(Self::make(Some(data), vec![], None, true))
-    }
-}
 
 fn topo_sort<T: Type, D: Device<T>>(
     node: &Tensor<T, D>,
