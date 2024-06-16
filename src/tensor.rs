@@ -577,6 +577,7 @@ fn uuid() -> usize {
 mod tests {
     use super::*;
     use crate::cpu::CPU;
+    use crate::f16;
 
     #[test]
     fn test_new() {
@@ -807,5 +808,33 @@ mod tests {
         let b = a.split(1, 1, 2);
         b.backward();
         assert!(a.grad().unwrap() == Tensor::new2d([[0., 1., 1.], [0., 1., 1.]], false));
+    }
+
+    #[test]
+    fn test_f16_matmul() {
+        let a = Tensor::<f16, CPU>::new2d(
+            [
+                [f16::from_f32(1.), f16::from_f32(2.), f16::from_f32(3.)],
+                [f16::from_f32(4.), f16::from_f32(5.), f16::from_f32(6.)],
+            ],
+            true,
+        );
+        let b = Tensor::<f16, CPU>::new2d(
+            [
+                [f16::from_f32(-1.), f16::from_f32(2.), f16::from_f32(-3.)],
+                [f16::from_f32(4.), f16::from_f32(-5.), f16::from_f32(6.)],
+            ],
+            true,
+        );
+        let c = a.matmul(&b.transpose(None));
+        assert!(
+            c == Tensor::new2d(
+                [
+                    [f16::from_f32(-6.), f16::from_f32(12.)],
+                    [f16::from_f32(-12.), f16::from_f32(27.)]
+                ],
+                false
+            )
+        );
     }
 }

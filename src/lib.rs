@@ -11,6 +11,8 @@ pub mod optim;
 pub mod tensor;
 mod type_trait;
 
+pub use type_trait::f16;
+
 static LAZY_MODE: AtomicBool = AtomicBool::new(false);
 
 pub fn is_lazy() -> bool {

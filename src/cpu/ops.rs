@@ -1,5 +1,5 @@
 use crate::cpu::Idx;
-use crate::type_trait::Type;
+use crate::type_trait::{f16, Type};
 use num_traits::Zero;
 use std::cmp::min;
 use std::simd::Simd;
@@ -69,6 +69,41 @@ impl CPUCopy for f32 {
                 rhs.as_mut_ptr(),
                 1,
             );
+        }
+    }
+}
+
+impl CPUTile for f16 {
+    const LANES: usize = 64;
+
+    fn tiled_matmul(
+        lhs: &[f16],
+        rhs: &[f16],
+        out: &mut [f16],
+        m: usize,
+        k: usize,
+        r: usize,
+        c: usize,
+    ) {
+        let tile = Self::LANES;
+        let mut temp = vec![f16::zero(); tile * tile];
+        for q in (0..m).step_by(tile) {
+            let t1 = q * tile;
+            let t2 = (q + tile) * tile;
+            let tile_lhs = &lhs[t1..t2];
+            let tile_rhs = &rhs[t1..t2];
+            for j in 0..tile {
+                let j_offset = j * tile;
+                for i in 0..tile {
+                    let i_offset = i * tile;
+                    for p in 0..tile {
+                        temp[i_offset + p] += tile_lhs[i_offset + j] * tile_rhs[j_offset + p];
+                    }
+                }
+            }
+        }
+        for i in 0..r {
+            out[i * k..i * k + c].copy_from_slice(&temp[(i * tile)..(i * tile + c)]);
         }
     }
 }
@@ -152,9 +187,9 @@ macro_rules! impl_tile {
                 fn tiled_matmul(lhs: &[$t], rhs: &[$t], out: &mut [$t], m: usize, k: usize, r: usize, c: usize) {
                     let tile = Self::LANES;
                     let mut temp = vec![Simd::<$t, { Self::LANES }>::splat(<$t as Zero>::zero()); tile];
-                    for k in (0..m).step_by(tile) {
-                        let t1 = k * tile;
-                        let t2 = (k + tile) * tile;
+                    for q in (0..m).step_by(tile) {
+                        let t1 = q * tile;
+                        let t2 = (q + tile) * tile;
                         let tile_lhs = &lhs[t1..t2];
                         let tile_rhs = &rhs[t1..t2];
                         for j in 0..tile {
@@ -188,8 +223,7 @@ macro_rules! impl_matmul {
                         .iter()
                         .map(|x| (x + tile - 1) / tile * tile)
                         .collect::<Vec<_>>();
-                    for o in 0..total / inner_size {
-                        let outer_offset = o * inner_size;
+                    for outer_offset in (0..total).step_by(inner_size) {
                         let mut temp_rhs = vec![<$t>::zero(); tiled_dims[1] * tiled_dims[2]];
                         let mut uncontiguous = vec![<$t>::zero(); dims[2]];
                         for i in 0..dims[1] {
@@ -244,10 +278,10 @@ macro_rules! impl_matmul {
     };
 }
 
-impl_copy!(f64, isize, i8, i16, i32, i64, usize, u8, u16, u32, u64);
+impl_copy!(f16, f64, isize, i8, i16, i32, i64, usize, u8, u16, u32, u64);
 
 impl_tile!(f64, isize, i8, i16, i32, i64, usize, u8, u16, u32, u64);
 
-impl_matmul!(f64, isize, i8, i16, i32, i64, usize, u8, u16, u32, u64);
+impl_matmul!(f16, f64, isize, i8, i16, i32, i64, usize, u8, u16, u32, u64);
 
 impl<T: CPUCopy + CPUMatmul + Type> CPUType for T {}
